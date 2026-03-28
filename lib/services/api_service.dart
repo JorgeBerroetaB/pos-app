@@ -1,13 +1,13 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/producto.dart';
-import '../models/detalle_venta.dart'; // ¡Agregado para que reconozca el carrito de compras!
-import '../models/metodo_pago.dart'; // ¡NUEVO IMPORT PARA EL MÉTODO DE PAGO!
-import '../models/venta.dart'; // ¡Nuevo import para leer el historial!
+import '../models/detalle_venta.dart';
+import '../models/metodo_pago.dart'; 
+import '../models/venta.dart'; 
 
 class ApiService {
   static const String baseUrl = 'http://localhost:8080/api/productos';
-  static const String ventasUrl = 'http://localhost:8080/api/ventas'; // ¡Nueva URL para la caja!
+  static const String ventasUrl = 'http://localhost:8080/api/ventas';
 
   // 1. Traer todos los productos
   Future<List<Producto>> obtenerTodos() async {
@@ -26,15 +26,14 @@ class ApiService {
     if (response.statusCode == 200) {
       return Producto.fromJson(json.decode(utf8.decode(response.bodyBytes)));
     } else if (response.statusCode == 404) {
-      return null; // Retorna nulo si no lo encuentra
+      return null;
     } else {
       throw Exception('Error al buscar el producto');
     }
   }
 
-  // Nueva función: Buscar por término (nombre o fragmento de SKU)
+  // Buscar por término (nombre o fragmento de SKU)
   Future<List<Producto>> buscarProductos(String termino) async {
-    // Llamamos a la nueva ruta que creamos en Spring Boot
     final response = await http.get(Uri.parse('$baseUrl/buscar?termino=$termino'));
     
     if (response.statusCode == 200) {
@@ -71,16 +70,18 @@ class ApiService {
     );
   }
 
-  // --- ¡MODIFICADO MÓDULO DE VENTAS! ---
-  // Ahora recibe el carrito y el método de pago seleccionado en el popup
-  Future<void> registrarVenta(List<DetalleVenta> carrito, MetodoPago metodoPago) async {
-    // 1. Convertimos nuestra lista de objetos a una lista de JSONs (solo los detalles)
+  // ==========================================
+  // 🔥 ¡MODIFICADO MÓDULO DE VENTAS! 🔥
+  // Ahora recibe el carrito y una LISTA de pagos con sus montos
+  // ==========================================
+  Future<void> registrarVenta(List<DetalleVenta> carrito, List<Map<String, dynamic>> pagos) async {
+    // 1. Convertimos el carrito a JSON
     List<Map<String, dynamic>> carritoJson = carrito.map((item) => item.toJson()).toList();
 
-    // 2. Armamos el objeto de venta completo tal cual lo espera el backend (Java)
+    // 2. Armamos el objeto tal cual lo espera el nuevo VentaRequestDTO de Java
     final datosVenta = {
       "detalles": carritoJson,
-      "metodoPago": metodoPago.name.toUpperCase() // Convierte "efectivo" a "EFECTIVO"
+      "pagos": pagos // ¡Aquí mandamos la lista de pagos divididos!
     };
 
     final response = await http.post(
@@ -90,7 +91,6 @@ class ApiService {
     );
 
     if (response.statusCode != 201) {
-      // Si el backend da error (ej. No hay stock), lanzamos la excepción con el mensaje del servidor
       throw Exception(response.body);
     }
   }

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'models/producto.dart';
 import 'models/detalle_venta.dart';
-import 'models/metodo_pago.dart';
 import 'services/api_service.dart';
 import 'services/ticket_service.dart';
 
@@ -17,22 +16,19 @@ class _PantallaCajaState extends State<PantallaCaja> {
   final ApiService apiService = ApiService();
   final TextEditingController _searchController = TextEditingController();
   
-  // Nodos de enfoque para no perder el rastro del teclado
+  // Nodos de enfoque
   final FocusNode _searchFocusNode = FocusNode(); 
   final FocusNode _rootFocusNode = FocusNode(); 
   
-  // Nodos y controlador para la edición de precio inline
+  // Edición de precio inline
   final FocusNode _precioFocusNode = FocusNode();
   final TextEditingController _precioController = TextEditingController();
-  int _indiceEditandoPrecio = -1; // -1 significa que no estamos editando nada
+  int _indiceEditandoPrecio = -1; 
   
   List<Producto> _productosBusqueda = []; 
   List<DetalleVenta> _carrito = []; 
   
-  // Rastreo de búsqueda
   int _itemBusquedaSeleccionado = -1;
-
-  // Rastreo del carrito para navegar con teclado
   bool _enCarrito = false; 
   int _carritoSeleccionado = 0;
 
@@ -70,20 +66,13 @@ class _PantallaCajaState extends State<PantallaCaja> {
       return;
     }
 
-    // ==========================================
-    // ¡NUEVA MAGIA: DETECTOR DE BALANZAS! ⚖️
-    // ==========================================
-    // Las balanzas generan un código de 13 dígitos que empieza con 20
     bool esBalanza = termino.length == 13 && termino.startsWith('20');
     String skuBuscado = termino;
     double? precioBalanza;
 
     if (esBalanza) {
-      // 1. Extraemos el SKU (Dígitos del 2 al 7) y quitamos ceros a la izquierda
       String skuExtraido = termino.substring(2, 7);
       skuBuscado = int.parse(skuExtraido).toString(); 
-      
-      // 2. Extraemos el precio total (Dígitos del 7 al 12)
       precioBalanza = double.tryParse(termino.substring(7, 12));
     }
 
@@ -113,16 +102,13 @@ class _PantallaCajaState extends State<PantallaCaja> {
     }
   }
 
-  // ¡MODIFICADO! Ahora recibe el precio opcional de la balanza
   void _agregarAlCarrito(Producto producto, {double? precioBalanza}) {
     setState(() {
       if (precioBalanza != null) {
-        // Si viene de balanza, lo metemos como un renglón único con su propio precio
         final nuevoDetalle = DetalleVenta(producto: producto, cantidad: 1);
         nuevoDetalle.precioAplicado = precioBalanza;
         _carrito.add(nuevoDetalle);
       } else {
-        // Lógica normal: agrupa los productos iguales que NO tengan precios modificados
         int index = _carrito.indexWhere((item) => item.producto.sku == producto.sku && item.precioAplicado == null);
         if (index != -1) {
           _carrito[index].cantidad++;
@@ -131,7 +117,7 @@ class _PantallaCajaState extends State<PantallaCaja> {
         }
       }
       _enCarrito = false;
-      _indiceEditandoPrecio = -1; // Cancelar edición si agregamos algo
+      _indiceEditandoPrecio = -1; 
     });
   }
 
@@ -141,7 +127,6 @@ class _PantallaCajaState extends State<PantallaCaja> {
       if (_carrito[index].cantidad <= 0) {
         _carrito.removeAt(index);
         
-        // Si estábamos editando este ítem o uno inferior, se ajusta
         if (_indiceEditandoPrecio == index) _indiceEditandoPrecio = -1;
         else if (_indiceEditandoPrecio > index) _indiceEditandoPrecio--;
 
@@ -173,17 +158,32 @@ class _PantallaCajaState extends State<PantallaCaja> {
     }
   }
 
+  // =========================================================================
+  // 🔥 EL SÚPER POPUP DE COBRO (MULTIPAGO + LISTA DE PAGOS A JAVA) 🔥
+  // =========================================================================
   void _abrirPopupCobro() {
     if (_carrito.isEmpty) return;
 
-    setState(() { _indiceEditandoPrecio = -1; }); // Cierra edición por seguridad
+    setState(() { _indiceEditandoPrecio = -1; }); 
 
     final double totalActual = _totalPagar;
     final int totalAproximado = _aproximarPesoChileno(totalActual);
-    MetodoPago metodoSeleccionado = MetodoPago.efectivo;
-    int indiceMetodo = 0; 
     
+    bool imprimirTicket = true;
+    
+    final TextEditingController tarjetaCtrl = TextEditingController(text: totalAproximado.toString());
+    final TextEditingController efectivoCtrl = TextEditingController();
+    final TextEditingController transCtrl = TextEditingController();
+
+    final FocusNode switchFocus = FocusNode();
+    final FocusNode tarjetaFocus = FocusNode();
+    final FocusNode efectivoFocus = FocusNode();
+    final FocusNode transFocus = FocusNode();
     final FocusNode popupFocusNode = FocusNode();
+
+    final List<FocusNode> nodosNavegacion = [switchFocus, tarjetaFocus, efectivoFocus, transFocus];
+    int focoActualIndex = 1;
+
     showDialog(
       context: context,
       barrierDismissible: false, 
@@ -191,34 +191,78 @@ class _PantallaCajaState extends State<PantallaCaja> {
         return StatefulBuilder(
           builder: (BuildContext innerContext, StateSetter setDialogState) {
             
-            void cambiarMetodo(int delta) {
-              setDialogState(() {
-                indiceMetodo = (indiceMetodo + delta) % MetodoPago.values.length;
-                if (indiceMetodo < 0) indiceMetodo = MetodoPago.values.length - 1;
-                metodoSeleccionado = MetodoPago.values[indiceMetodo];
-              });
+            switchFocus.addListener(() {
+              if (switchFocus.hasFocus) setDialogState(() {});
+            });
+
+            void cambiarFoco(int index) {
+              if (index < 0) index = nodosNavegacion.length - 1;
+              if (index >= nodosNavegacion.length) index = 0;
+              
+              focoActualIndex = index;
+              nodosNavegacion[focoActualIndex].requestFocus();
+              setDialogState(() {}); 
+
+              if (focoActualIndex == 1) {
+                tarjetaCtrl.selection = TextSelection(baseOffset: 0, extentOffset: tarjetaCtrl.text.length);
+              } else if (focoActualIndex == 2) {
+                efectivoCtrl.selection = TextSelection(baseOffset: 0, extentOffset: efectivoCtrl.text.length);
+              } else if (focoActualIndex == 3) {
+                transCtrl.selection = TextSelection(baseOffset: 0, extentOffset: transCtrl.text.length);
+              }
             }
 
+            if (focoActualIndex == 1 && !tarjetaFocus.hasFocus) {
+               Future.delayed(const Duration(milliseconds: 50), () => cambiarFoco(1));
+            }
+
+            double pagadoEfec = double.tryParse(efectivoCtrl.text) ?? 0;
+            double pagadoTarj = double.tryParse(tarjetaCtrl.text) ?? 0;
+            double pagadoTrans = double.tryParse(transCtrl.text) ?? 0;
+
+            double totalPagado = pagadoEfec + pagadoTarj + pagadoTrans;
+            double restante = totalAproximado - totalPagado;
+            bool pagoCompleto = restante <= 0;
+            double vuelto = restante < 0 ? restante.abs() : 0;
+
             void finalizarVenta() async {
+              if (!pagoCompleto) return; 
+
+              // --- PREPARAMOS LA LISTA DE PAGOS PARA SPRING BOOT ---
+              List<Map<String, dynamic>> listaPagos = [];
+              
+              // Si dieron efectivo y hay vuelto, solo enviamos al sistema el efectivo real que entra a la caja
+              double efectivoReal = pagadoEfec - vuelto;
+              
+              if (pagadoTarj > 0) listaPagos.add({"metodoPago": "TARJETA", "monto": pagadoTarj});
+              if (efectivoReal > 0) listaPagos.add({"metodoPago": "EFECTIVO", "monto": efectivoReal});
+              if (pagadoTrans > 0) listaPagos.add({"metodoPago": "TRANSFERENCIA", "monto": pagadoTrans});
+
               try {
-                await apiService.registrarVenta(_carrito, metodoSeleccionado);
+                // Enviamos el carrito y la nueva lista de pagos!
+                await apiService.registrarVenta(_carrito, listaPagos);
                 
                 if (!dialogContext.mounted) return; 
                 Navigator.pop(dialogContext); 
 
-                // Si tienes implementado tu servicio de ticket, se imprimirá aquí
-                final ticketService = TicketService();
-                await ticketService.imprimirTicket(
-                  carrito: List.from(_carrito), 
-                  total: totalActual,
-                  totalAproximado: totalAproximado,
-                  metodoPago: metodoSeleccionado.nombre,
-                );
+                if (imprimirTicket) {
+                  final ticketService = TicketService();
+                  await ticketService.imprimirTicket(
+                    carrito: List.from(_carrito), 
+                    total: totalActual,
+                    totalAproximado: totalAproximado,
+                    metodoPago: "MÚLTIPLE", 
+                  );
+                }
 
                 if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('¡Venta registrada e imprimiendo! 💰✅'), backgroundColor: Colors.green),
+                  SnackBar(
+                    content: Text(imprimirTicket ? '¡Venta registrada e imprimiendo! 💰✅' : '¡Venta registrada sin ticket! 💰✅'), 
+                    backgroundColor: Colors.green
+                  ),
                 );
+
                 setState(() {
                   _carrito.clear();
                   _searchController.clear();
@@ -227,85 +271,156 @@ class _PantallaCajaState extends State<PantallaCaja> {
                   _enCarrito = false;
                   _carritoSeleccionado = 0;
                 });
-                _searchFocusNode.requestFocus(); 
+                
+                Future.delayed(const Duration(milliseconds: 100), () {
+                  if (context.mounted) _searchFocusNode.requestFocus();
+                });
 
               } catch (e) {
-                if (dialogContext.mounted) {
-                  Navigator.pop(dialogContext);
-                }
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
                 
                 if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Error al procesar la venta: $e', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)), 
-                    backgroundColor: Colors.red,
-                    duration: const Duration(seconds: 5), 
-                  ),
+                  SnackBar(content: Text('Error al cobrar: $e'), backgroundColor: Colors.red),
                 );
-                _searchFocusNode.requestFocus();
+                Future.delayed(const Duration(milliseconds: 100), () {
+                  if (context.mounted) _searchFocusNode.requestFocus();
+                });
               }
+            }
+
+            Widget campoPago(String titulo, TextEditingController ctrl, FocusNode myFocus, int myIndex, IconData icono) {
+              return Focus(
+                onFocusChange: (hasFocus) {
+                  if (hasFocus) focoActualIndex = myIndex; 
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6.0),
+                  child: TextField(
+                    controller: ctrl,
+                    focusNode: myFocus,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    onChanged: (_) => setDialogState(() {}),
+                    onSubmitted: (_) {
+                      if (pagoCompleto) finalizarVenta();
+                    },
+                    decoration: InputDecoration(
+                      labelText: titulo,
+                      prefixIcon: Icon(icono, color: Colors.blueGrey),
+                      prefixText: '\$ ',
+                      border: OutlineInputBorder(
+                        borderSide: BorderSide(
+                          color: myFocus.hasFocus ? Colors.blue : Colors.grey, 
+                          width: myFocus.hasFocus ? 2.0 : 1.0
+                        )
+                      ),
+                      filled: true,
+                      fillColor: Colors.white,
+                    ),
+                  ),
+                ),
+              );
             }
 
             return Focus(
               focusNode: popupFocusNode,
-              autofocus: true,
               onKeyEvent: (node, event) {
                 if (event is KeyDownEvent) {
-                   if (event.logicalKey == LogicalKeyboardKey.arrowDown || event.logicalKey == LogicalKeyboardKey.arrowRight) {
-                    cambiarMetodo(1);
+                  if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+                    cambiarFoco(focoActualIndex + 1);
                     return KeyEventResult.handled;
-                  } else if (event.logicalKey == LogicalKeyboardKey.arrowUp || event.logicalKey == LogicalKeyboardKey.arrowLeft) {
-                    cambiarMetodo(-1);
+                  } 
+                  else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+                    cambiarFoco(focoActualIndex - 1);
                     return KeyEventResult.handled;
-                  } else if (event.logicalKey == LogicalKeyboardKey.enter || event.logicalKey == LogicalKeyboardKey.numpadEnter) {
-                    finalizarVenta(); 
-                    return KeyEventResult.handled;
-                  } else if (event.logicalKey == LogicalKeyboardKey.escape) {
+                  } 
+                  else if (event.logicalKey == LogicalKeyboardKey.escape) {
                     Navigator.pop(dialogContext);
-                    _searchFocusNode.requestFocus();
+                    Future.delayed(const Duration(milliseconds: 100), () {
+                      if (context.mounted) _searchFocusNode.requestFocus();
+                    });
+                    return KeyEventResult.handled;
+                  } 
+                  else if (event.logicalKey == LogicalKeyboardKey.enter || event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+                    if (focoActualIndex == 0) {
+                      setDialogState(() { imprimirTicket = !imprimirTicket; });
+                      return KeyEventResult.handled;
+                    } else if (pagoCompleto) {
+                      finalizarVenta();
+                      return KeyEventResult.handled;
+                    }
+                  } 
+                  else if (event.logicalKey == LogicalKeyboardKey.space && focoActualIndex == 0) {
+                    setDialogState(() { imprimirTicket = !imprimirTicket; });
                     return KeyEventResult.handled;
                   }
                 }
-                return KeyEventResult.ignored;
+                return KeyEventResult.ignored; 
               },
               child: AlertDialog(
                 title: const Text('Finalizar Venta 🧾', textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.bold)),
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const SizedBox(height: 10),
-                    const Text('Método de pago', style: TextStyle(fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 5),
-                    
-                    Container(
-                      width: 250,
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.green, width: 2), 
-                        borderRadius: BorderRadius.circular(8),
-                        color: Colors.green.withOpacity(0.1)
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.arrow_left, color: Colors.green, size: 30),
-                            onPressed: () => cambiarMetodo(-1),
+                content: SizedBox(
+                  width: 350,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          decoration: BoxDecoration(
+                            color: imprimirTicket ? Colors.blue.withOpacity(0.1) : Colors.grey.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: switchFocus.hasFocus ? Colors.orange : (imprimirTicket ? Colors.blue : Colors.grey),
+                              width: switchFocus.hasFocus ? 3.0 : 1.0, 
+                            )
                           ),
-                          Text(metodoSeleccionado.nombre.toUpperCase(), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.green)),
-                          IconButton(
-                            icon: const Icon(Icons.arrow_right, color: Colors.green, size: 30),
-                            onPressed: () => cambiarMetodo(1),
+                          child: SwitchListTile(
+                            focusNode: switchFocus,
+                            title: const Text('Imprimir Ticket', style: TextStyle(fontWeight: FontWeight.bold)),
+                            value: imprimirTicket,
+                            activeColor: Colors.blue,
+                            onChanged: (bool value) {
+                              setDialogState(() { 
+                                imprimirTicket = value; 
+                                focoActualIndex = 0; 
+                                switchFocus.requestFocus();
+                              });
+                            },
                           ),
-                        ],
-                      ),
+                        ),
+                        const Divider(height: 30, thickness: 2),
+
+                        const Text('TOTAL A PAGAR', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.grey)),
+                        Text('\$${totalAproximado.toString()}', style: const TextStyle(fontSize: 45, color: Colors.black, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 15),
+
+                        campoPago('Tarjeta', tarjetaCtrl, tarjetaFocus, 1, Icons.credit_card),
+                        campoPago('Efectivo', efectivoCtrl, efectivoFocus, 2, Icons.payments),
+                        campoPago('Transferencia', transCtrl, transFocus, 3, Icons.sync_alt),
+                        
+                        const SizedBox(height: 15),
+
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: pagoCompleto ? Colors.green.withOpacity(0.1) : Colors.red.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8)
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(pagoCompleto ? 'VUELTO:' : 'FALTAN:', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: pagoCompleto ? Colors.green[700] : Colors.red[700])),
+                              Text(
+                                pagoCompleto ? '\$${vuelto.toStringAsFixed(0)}' : '\$${restante.toStringAsFixed(0)}', 
+                                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: pagoCompleto ? Colors.green[700] : Colors.red[700])
+                              ),
+                            ],
+                          ),
+                        )
+                      ],
                     ),
-                    const SizedBox(height: 10),
-                    const Text('(Usa las flechas o Enter)', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                    const SizedBox(height: 30),
-                    const Text('TOTAL A PAGAR', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 10),
-                    Text('\$${totalAproximado.toString()}', style: const TextStyle(fontSize: 50, color: Colors.green, fontWeight: FontWeight.bold)),
-                  ],
+                  ),
                 ),
                 actionsPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
                 actions: [
@@ -315,19 +430,22 @@ class _PantallaCajaState extends State<PantallaCaja> {
                       TextButton(
                         onPressed: () {
                           Navigator.pop(dialogContext);
-                          _searchFocusNode.requestFocus();
+                          Future.delayed(const Duration(milliseconds: 100), () {
+                            if (context.mounted) _searchFocusNode.requestFocus();
+                          });
                         },
                         child: const Text('Cancelar (Esc)', style: TextStyle(color: Colors.red, fontSize: 16)),
                       ),
                       ElevatedButton(
-                        onPressed: finalizarVenta,
+                        onPressed: pagoCompleto ? finalizarVenta : null,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.green,
                           foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          disabledBackgroundColor: Colors.grey[300],
                         ),
-                        child: const Text('Terminar venta\n(Enter)', textAlign: TextAlign.center, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        child: const Text('Confirmar Venta (Enter)', textAlign: TextAlign.center, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                       ),
                     ],
                   ),
@@ -339,6 +457,9 @@ class _PantallaCajaState extends State<PantallaCaja> {
       },
     );
   }
+
+  // =========================================================================
+  // =========================================================================
 
   @override
   Widget build(BuildContext context) {
@@ -370,7 +491,6 @@ class _PantallaCajaState extends State<PantallaCaja> {
           }
 
           if (!_enCarrito) {
-            // NAVEGACIÓN EN EL BUSCADOR
             if (event.logicalKey == LogicalKeyboardKey.arrowDown && _productosBusqueda.isNotEmpty) {
               setState(() {
                 _itemBusquedaSeleccionado = (_itemBusquedaSeleccionado + 1).clamp(0, _productosBusqueda.length - 1);
@@ -393,30 +513,23 @@ class _PantallaCajaState extends State<PantallaCaja> {
             }
           } 
           else { 
-            // ==========================================
-            // ESTAMOS EN EL CARRITO
-            // ==========================================
             
-            // 🔴 1. SI ESTAMOS EDITANDO UN PRECIO ACTUALMENTE
             if (_indiceEditandoPrecio != -1) {
               if (event.logicalKey == LogicalKeyboardKey.enter || event.logicalKey == LogicalKeyboardKey.numpadEnter) {
-                // Guardar el precio al presionar Enter
                 final newPrice = double.tryParse(_precioController.text);
                 setState(() {
                   if (newPrice != null) {
                     _carrito[_indiceEditandoPrecio].precioAplicado = newPrice;
                   }
-                  _indiceEditandoPrecio = -1; // Salir de modo edición
+                  _indiceEditandoPrecio = -1; 
                 });
-                _rootFocusNode.requestFocus(); // Devolver el foco a la caja general
+                _rootFocusNode.requestFocus(); 
                 return KeyEventResult.handled;
               }
               return KeyEventResult.ignored; 
             }
 
-            // 🟢 2. MODO NAVEGACIÓN NORMAL (No estamos editando aún)
             if (_carritoSeleccionado < _carrito.length) {
-              // Atajos rápidos para EMPEZAR a editar
               String? digit;
               final key = event.logicalKey;
               if (key == LogicalKeyboardKey.digit0 || key == LogicalKeyboardKey.numpad0) digit = '0';
@@ -436,7 +549,7 @@ class _PantallaCajaState extends State<PantallaCaja> {
                 });
                 
                 _precioController.value = TextEditingValue(
-                  text: digit!,
+                  text: digit,
                   selection: const TextSelection.collapsed(offset: 1),
                 );
                 
@@ -444,7 +557,6 @@ class _PantallaCajaState extends State<PantallaCaja> {
                 return KeyEventResult.handled;
               }
 
-              // Atajo: E o P abre el editor pero mantiene el precio para modificarlo
               if (key == LogicalKeyboardKey.keyE || key == LogicalKeyboardKey.keyP) {
                 setState(() {
                   _indiceEditandoPrecio = _carritoSeleccionado;
@@ -461,7 +573,6 @@ class _PantallaCajaState extends State<PantallaCaja> {
               }
             }
 
-            // Moverse por el carrito
             if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
               setState(() { _enCarrito = false; });
               _searchFocusNode.requestFocus();
@@ -504,7 +615,6 @@ class _PantallaCajaState extends State<PantallaCaja> {
         ),
         body: Row(
           children: [
-            // PANEL IZQUIERDO: Buscador
             Expanded(
               flex: 6,
               child: Column(
@@ -556,7 +666,6 @@ class _PantallaCajaState extends State<PantallaCaja> {
             ),
             const VerticalDivider(width: 1, thickness: 1),
             
-            // PANEL DERECHO: Carrito 
             Expanded(
               flex: 4,
               child: Container(
@@ -602,7 +711,6 @@ class _PantallaCajaState extends State<PantallaCaja> {
                               padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
                               child: Row(
                                 children: [
-                                  // 1. Nombre 
                                   Expanded(
                                     flex: 3,
                                     child: Text(
@@ -613,7 +721,6 @@ class _PantallaCajaState extends State<PantallaCaja> {
                                     ),
                                   ),
                                   
-                                  // 2. Precio Editable INLINE
                                   Expanded(
                                     flex: 2,
                                     child: isEditing
@@ -683,7 +790,6 @@ class _PantallaCajaState extends State<PantallaCaja> {
                                           ),
                                   ),
 
-                                  // 3. Controles de cantidad
                                   Expanded(
                                     flex: 2,
                                     child: Row(
@@ -716,7 +822,6 @@ class _PantallaCajaState extends State<PantallaCaja> {
                       ),
                     ),
                     
-                    // BOTÓN DE COBRAR
                     Container(
                       padding: const EdgeInsets.all(20),
                       color: Colors.white,
