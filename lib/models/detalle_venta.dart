@@ -19,7 +19,26 @@ class DetalleVenta {
     this.precioAplicado, // Opcional
   });
 
-  // Para enviar los datos al backend (Spring Boot)
+  // ========================================================
+  // 🔥 ¡NUEVO! Para leer los datos del backend (Historial de Ventas)
+  // ========================================================
+  factory DetalleVenta.fromJson(Map<String, dynamic> json) {
+    // Calculamos el precio al que se vendió en ese momento exacto
+    double? precioCalculado;
+    if (json['subtotal'] != null && json['cantidad'] != null && json['cantidad'] > 0) {
+      precioCalculado = (json['subtotal'] as num).toDouble() / (json['cantidad'] as num).toInt();
+    }
+
+    return DetalleVenta(
+      producto: Producto.fromJson(json['producto']),
+      cantidad: json['cantidad'] ?? 1,
+      precioAplicado: precioCalculado,
+    );
+  }
+
+  // ========================================================
+  // Para enviar los datos al backend al momento de cobrar
+  // ========================================================
   Map<String, dynamic> toJson() {
     return {
       "producto": {

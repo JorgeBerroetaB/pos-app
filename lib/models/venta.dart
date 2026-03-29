@@ -1,31 +1,70 @@
 import 'metodo_pago.dart';
+import 'detalle_venta.dart'; 
+
+class PagoVenta {
+  final MetodoPago metodoPago;
+  final double monto;
+
+  PagoVenta({required this.metodoPago, required this.monto});
+
+  factory PagoVenta.fromJson(Map<String, dynamic> json) {
+    MetodoPago metodoParseado = MetodoPago.values.firstWhere(
+      (m) => m.name.toUpperCase() == (json['metodoPago'] ?? '').toString().toUpperCase(),
+      orElse: () => MetodoPago.efectivo,
+    );
+    return PagoVenta(
+      metodoPago: metodoParseado,
+      monto: (json['monto'] as num?)?.toDouble() ?? 0.0,
+    );
+  }
+}
 
 class Venta {
   final int id;
-  final DateTime fecha;
+  final DateTime? fecha;
   final double total;
-  final MetodoPago metodoPago;
+  final String estado; // 🔥 NUEVO: Para saber si está CANCELADA o COMPLETADA
+  final List<PagoVenta>? pagos; 
+  final List<DetalleVenta> detalles; 
 
   Venta({
     required this.id,
-    required this.fecha,
+    this.fecha,
     required this.total,
-    required this.metodoPago,
+    required this.estado,
+    this.pagos,
+    required this.detalles,
   });
 
-  // Transforma el JSON que manda Spring Boot a un objeto de Dart
   factory Venta.fromJson(Map<String, dynamic> json) {
-    // Buscamos a qué método de pago corresponde el texto (ej: "EFECTIVO")
-    MetodoPago metodoParseado = MetodoPago.values.firstWhere(
-      (m) => m.name.toUpperCase() == json['metodoPago'].toString().toUpperCase(),
-      orElse: () => MetodoPago.efectivo, // Por defecto si hay error
-    );
+    DateTime? parsedFecha;
+    if (json['fecha'] != null) {
+      parsedFecha = DateTime.tryParse(json['fecha']);
+    }
+
+    List<PagoVenta> parsedPagos = [];
+    if (json['pagos'] != null) {
+      parsedPagos = (json['pagos'] as List).map((p) => PagoVenta.fromJson(p)).toList();
+    } else if (json['metodoPago'] != null) {
+      MetodoPago metodoAntiguo = MetodoPago.values.firstWhere(
+        (m) => m.name.toUpperCase() == json['metodoPago'].toString().toUpperCase(),
+        orElse: () => MetodoPago.efectivo,
+      );
+      parsedPagos.add(PagoVenta(metodoPago: metodoAntiguo, monto: (json['total'] as num).toDouble()));
+    }
+
+    List<DetalleVenta> parsedDetalles = [];
+    if (json['detalles'] != null) {
+      parsedDetalles = (json['detalles'] as List).map((d) => DetalleVenta.fromJson(d)).toList();
+    }
 
     return Venta(
-      id: json['id'],
-      fecha: DateTime.parse(json['fecha']),
-      total: (json['total'] as num).toDouble(),
-      metodoPago: metodoParseado,
+      id: json['id'] ?? 0,
+      fecha: parsedFecha ?? DateTime.now(),
+      total: (json['total'] as num?)?.toDouble() ?? 0.0,
+      estado: json['estado'] ?? 'COMPLETADA', // 🔥 Leemos el estado
+      pagos: parsedPagos,
+      detalles: parsedDetalles,
     );
   }
 }

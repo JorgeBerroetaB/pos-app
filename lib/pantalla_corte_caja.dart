@@ -26,7 +26,7 @@ class _PantallaCorteCajaState extends State<PantallaCorteCaja> {
     });
   }
 
-  // --- ¡NUEVO WIDGET CORREGIDO! TARJETAS RECTANGULARES Y ANCHAS ---
+  // --- WIDGET DE TARJETAS RECTANGULARES ---
   Widget _construirTarjetaResumen(String titulo, double monto, IconData icono, Color color) {
     return Card(
       elevation: 3,
@@ -36,38 +36,16 @@ class _PantallaCorteCajaState extends State<PantallaCorteCaja> {
         padding: const EdgeInsets.all(20.0),
         child: Row(
           children: [
-            // Círculo con el ícono (Izquierda)
             Container(
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.1),
-                shape: BoxShape.circle,
-              ),
+              decoration: BoxDecoration(color: color.withOpacity(0.1), shape: BoxShape.circle),
               child: Icon(icono, size: 30, color: color),
             ),
             const SizedBox(width: 20),
-            
-            // Texto del Título (Centro-Izquierda)
             Expanded(
-              child: Text(
-                titulo, 
-                style: const TextStyle(
-                  fontSize: 16, 
-                  fontWeight: FontWeight.bold, 
-                  color: Colors.grey
-                )
-              ),
+              child: Text(titulo, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.grey)),
             ),
-            
-            // Monto (Derecha)
-            Text(
-              '\$${monto.toStringAsFixed(0)}', 
-              style: TextStyle(
-                fontSize: 26, 
-                fontWeight: FontWeight.bold, 
-                color: color
-              )
-            ),
+            Text('\$${monto.toStringAsFixed(0)}', style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: color)),
           ],
         ),
       ),
@@ -93,23 +71,41 @@ class _PantallaCorteCajaState extends State<PantallaCorteCaja> {
           
           final todasLasVentas = snapshot.data ?? [];
           
-          // 1. Filtrar solo las ventas de HOY
           final hoy = DateTime.now();
-          final ventasHoy = todasLasVentas.where((v) => 
-            v.fecha.year == hoy.year && v.fecha.month == hoy.month && v.fecha.day == hoy.day
-          ).toList();
+          final ventasHoy = todasLasVentas.where((v) {
+            final fechaVenta = v.fecha ?? DateTime.now();
+            return fechaVenta.year == hoy.year && fechaVenta.month == hoy.month && fechaVenta.day == hoy.day;
+          }).toList();
 
-          // 2. Calcular los totales de hoy
           double totalGeneral = 0;
           double totalEfectivo = 0;
           double totalTarjeta = 0;
           double totalTransferencia = 0;
+          
+          // 🔥 NUEVO: Sumar aparte lo que se canceló
+          double totalCancelado = 0;
+          int cantidadCanceladas = 0;
+          int cantidadCompletadas = 0;
 
           for (var venta in ventasHoy) {
+            // Si la venta está cancelada, la sumamos al pozo de anuladas y la saltamos
+            if (venta.estado == 'CANCELADA') {
+              totalCancelado += venta.total;
+              cantidadCanceladas++;
+              continue; 
+            }
+
+            // Si llegamos aquí, es porque la venta fue COMPLETADA
+            cantidadCompletadas++;
             totalGeneral += venta.total;
-            if (venta.metodoPago == MetodoPago.efectivo) totalEfectivo += venta.total;
-            else if (venta.metodoPago == MetodoPago.tarjeta) totalTarjeta += venta.total;
-            else if (venta.metodoPago == MetodoPago.transferencia) totalTransferencia += venta.total;
+            
+            if (venta.pagos != null) {
+              for (var pago in venta.pagos!) {
+                if (pago.metodoPago == MetodoPago.efectivo) totalEfectivo += pago.monto;
+                else if (pago.metodoPago == MetodoPago.tarjeta) totalTarjeta += pago.monto;
+                else if (pago.metodoPago == MetodoPago.transferencia) totalTransferencia += pago.monto;
+              }
+            }
           }
 
           return Padding(
@@ -119,23 +115,27 @@ class _PantallaCorteCajaState extends State<PantallaCorteCaja> {
               children: [
                 const Text('Resumen del Día', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 5),
-                Text('${hoy.day}/${hoy.month}/${hoy.year} - ${ventasHoy.length} ventas registradas hoy', style: const TextStyle(fontSize: 16, color: Colors.grey)),
+                Text('${hoy.day}/${hoy.month}/${hoy.year} - $cantidadCompletadas ventas exitosas | $cantidadCanceladas anuladas', style: const TextStyle(fontSize: 16, color: Colors.grey)),
                 const SizedBox(height: 20),
 
-                // --- ¡NUEVO DISEÑO! Listado de 4 tarjetas rectangulares ---
                 Expanded(
                   child: ListView(
                     children: [
-                      _construirTarjetaResumen('TOTAL VENTAS HOY', totalGeneral, Icons.account_balance_wallet, Colors.blue),
+                      _construirTarjetaResumen('TOTAL INGRESOS HOY', totalGeneral, Icons.account_balance_wallet, Colors.blue),
                       _construirTarjetaResumen('EFECTIVO EN CAJA', totalEfectivo, Icons.payments, Colors.green),
                       _construirTarjetaResumen('PAGOS CON TARJETA', totalTarjeta, Icons.credit_card, Colors.orange),
                       _construirTarjetaResumen('TRANSFERENCIAS', totalTransferencia, Icons.sync_alt, Colors.purple),
-                      const SizedBox(height: 30), // Espacio extra antes del botón
+                      
+                      const Divider(height: 40, thickness: 2),
+                      
+                      // 🔥 NUEVA TARJETA: VENTAS CANCELADAS
+                      _construirTarjetaResumen('VENTAS ANULADAS (No suman a caja)', totalCancelado, Icons.block, Colors.red),
+                      
+                      const SizedBox(height: 30),
                     ],
                   ),
                 ),
 
-                // Botón de Cierre
                 SizedBox(
                   width: double.infinity,
                   height: 60,
@@ -144,7 +144,6 @@ class _PantallaCorteCajaState extends State<PantallaCorteCaja> {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(content: Text('Imprimiendo Ticket Z de Cierre... 🖨️')),
                       );
-                      // Aquí luego conectaremos el TicketService para imprimir el cierre real
                     },
                     icon: const Icon(Icons.print, size: 28),
                     label: const Text('IMPRIMIR CORTE DE CAJA (Z)', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),

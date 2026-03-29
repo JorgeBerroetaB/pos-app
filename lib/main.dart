@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'models/producto.dart';
 import 'services/api_service.dart';
 import 'pantalla_caja.dart'; 
 import 'pantalla_corte_caja.dart'; 
+import 'pantalla_historial_ventas.dart';
 
 void main() {
   runApp(const YupiPosApp());
@@ -14,7 +16,7 @@ class YupiPosApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Yupi POS',
+      title: 'Pingu POS',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
@@ -35,17 +37,36 @@ class PantallaInventario extends StatefulWidget {
 class _PantallaInventarioState extends State<PantallaInventario> {
   final ApiService apiService = ApiService();
   final TextEditingController _searchController = TextEditingController();
+  
+  final FocusNode _searchFocusNode = FocusNode();
+  final FocusNode _mainFocusNode = FocusNode();
+  final ScrollController _scrollController = ScrollController();
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>(); 
+  
   Future<List<Producto>>? _productosFuture;
+  List<Producto> _productosActuales = []; 
+  
+  // 🔥 SISTEMA DE NAVEGACIÓN 2D 🔥
+  // -4 = Menú Hamburguesa
+  // -3 = Buscador
+  // -2 = Botón Buscar
+  // -1 = Botón Nuevo Producto
+  //  0 a N = Lista de productos
+  int _elementoActivo = -3; 
 
   @override
   void initState() {
     super.initState();
     _cargarTodosLosProductos();
+    Future.delayed(Duration.zero, () => _setElementoActivo(-3)); // Foco inicial en buscador
   }
 
   void _cargarTodosLosProductos() {
     setState(() {
-      _productosFuture = apiService.obtenerTodos();
+      _productosFuture = apiService.obtenerTodos().then((productos) {
+        _productosActuales = productos;
+        return productos;
+      });
     });
   }
 
@@ -56,31 +77,159 @@ class _PantallaInventarioState extends State<PantallaInventario> {
       return;
     }
     setState(() {
-      _productosFuture = apiService.buscarProductos(termino);
+      _productosFuture = apiService.buscarProductos(termino).then((productos) {
+        _productosActuales = productos;
+        return productos;
+      });
     });
   }
 
-  void _eliminar(String sku) async {
-    try {
-      await apiService.eliminarProducto(sku);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Producto eliminado 🗑️'), backgroundColor: Colors.redAccent),
-        );
+  // ==========================================
+  // 🔥 LÓGICA DE TECLADO MÁGICO 2.0 🔥
+  // ==========================================
+  void _setElementoActivo(int nuevo) {
+    setState(() => _elementoActivo = nuevo);
+    if (nuevo == -3) {
+      _searchFocusNode.requestFocus();
+    } else {
+      if (_searchFocusNode.hasFocus) _searchFocusNode.unfocus();
+      _mainFocusNode.requestFocus();
+    }
+  }
+
+  void _manejarTeclas(KeyEvent event) {
+    if (event is KeyDownEvent) {
+      // ALT + N: Nuevo Producto / ALT + M: Abrir Menú (Evita conflictos con Chrome)
+      if (HardwareKeyboard.instance.isAltPressed) {
+        if (event.logicalKey == LogicalKeyboardKey.keyN) {
+          _mostrarFormulario();
+          return;
+        } else if (event.logicalKey == LogicalKeyboardKey.keyM) {
+          _scaffoldKey.currentState?.openDrawer();
+          return;
+        }
       }
-      _cargarTodosLosProductos();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+
+      if (event.logicalKey == LogicalKeyboardKey.escape) {
+        _searchController.clear();
+        _buscarProducto();
+        _setElementoActivo(-3);
+      }
+      else if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+        if (_elementoActivo == -4) {
+          _setElementoActivo(-3); // Baja de hamburguesa a buscador
+        } else if (_elementoActivo >= -3 && _elementoActivo <= -1) {
+          if (_productosActuales.isNotEmpty) _setElementoActivo(0); // Baja a la lista
+        } else if (_elementoActivo >= 0 && _elementoActivo < _productosActuales.length - 1) {
+          _setElementoActivo(_elementoActivo + 1);
+          _hacerScrollHaciaItem();
+        }
+      }
+      else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+        if (_elementoActivo > 0) {
+          _setElementoActivo(_elementoActivo - 1);
+          _hacerScrollHaciaItem();
+        } else if (_elementoActivo == 0) {
+          _setElementoActivo(-3); // Sube de la lista al buscador
+        } else if (_elementoActivo >= -3 && _elementoActivo <= -1) {
+          _setElementoActivo(-4); // Sube de la barra al menú hamburguesa
+        }
+      }
+      else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+        if (_elementoActivo == -3) _setElementoActivo(-2);
+        else if (_elementoActivo == -2) _setElementoActivo(-1);
+      }
+      else if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+        if (_elementoActivo == -1) _setElementoActivo(-2);
+        else if (_elementoActivo == -2) _setElementoActivo(-3);
+      }
+      else if (event.logicalKey == LogicalKeyboardKey.enter) {
+        // Ejecutar acción según dónde estemos parados
+        if (_elementoActivo == -4) {
+          _scaffoldKey.currentState?.openDrawer();
+        } else if (_elementoActivo == -2) {
+          _buscarProducto();
+          _setElementoActivo(0); // Baja automáticamente tras buscar
+        } else if (_elementoActivo == -1) {
+          _mostrarFormulario();
+        } else if (_elementoActivo >= 0 && _elementoActivo < _productosActuales.length) {
+          _mostrarFormulario(productoExistente: _productosActuales[_elementoActivo]);
+        }
+      }
+      else if (event.logicalKey == LogicalKeyboardKey.delete) {
+        // Mostrar diálogo de confirmación antes de eliminar
+        if (_elementoActivo >= 0 && _elementoActivo < _productosActuales.length) {
+          _mostrarConfirmacionEliminar(_productosActuales[_elementoActivo]);
+        }
       }
     }
   }
 
-  // --- FUNCIÓN PARA MOSTRAR EL FORMULARIO (CREAR O EDITAR) ---
+  void _hacerScrollHaciaItem() {
+    double posicion = _elementoActivo * 80.0; 
+    _scrollController.animateTo(posicion, duration: const Duration(milliseconds: 200), curve: Curves.easeInOut);
+  }
+
+  void _eliminar(String sku) async {
+    await apiService.eliminarProducto(sku);
+    _cargarTodosLosProductos();
+    // Si borramos el último elemento, subimos el foco para no quedar en un índice inválido
+    if (_elementoActivo >= _productosActuales.length - 1) {
+      _setElementoActivo(_productosActuales.length - 2 >= 0 ? _productosActuales.length - 2 : -3);
+    }
+  }
+
+  // 🔥 NUEVA FUNCIÓN: Confirmación de eliminación 🔥
+  void _mostrarConfirmacionEliminar(Producto producto) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return Focus(
+          autofocus: true,
+          onKeyEvent: (node, event) {
+            if (event is KeyDownEvent) {
+              if (event.logicalKey == LogicalKeyboardKey.enter) {
+                Navigator.pop(context); // Cierra el diálogo
+                _eliminar(producto.sku); // Elimina
+                _mainFocusNode.requestFocus(); // Devuelve el foco a la pantalla principal
+                return KeyEventResult.handled;
+              } else if (event.logicalKey == LogicalKeyboardKey.escape) {
+                Navigator.pop(context);
+                _mainFocusNode.requestFocus();
+                return KeyEventResult.handled;
+              }
+            }
+            return KeyEventResult.ignored;
+          },
+          child: AlertDialog(
+            title: const Text('Eliminar Producto 🗑️', style: TextStyle(color: Colors.red)),
+            content: Text('¿Estás seguro de que deseas eliminar "${producto.nombre}"?\n\n(Presiona Enter para confirmar o Esc para cancelar)'),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _mainFocusNode.requestFocus();
+                },
+                child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+                onPressed: () {
+                  Navigator.pop(context);
+                  _eliminar(producto.sku);
+                  _mainFocusNode.requestFocus();
+                },
+                child: const Text('Eliminar'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   void _mostrarFormulario({Producto? productoExistente}) {
     final bool esEdicion = productoExistente != null;
-    
-    // Controladores para los campos de texto
     final skuController = TextEditingController(text: productoExistente?.sku ?? '');
     final nombreController = TextEditingController(text: productoExistente?.nombre ?? '');
     final precioVentaController = TextEditingController(text: productoExistente?.precioVenta.toString() ?? '');
@@ -90,63 +239,114 @@ class _PantallaInventarioState extends State<PantallaInventario> {
     showDialog(
       context: context,
       builder: (context) {
-        return AlertDialog(
-          title: Text(esEdicion ? 'Editar Producto ✏️' : 'Nuevo Producto 📦'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: skuController,
-                  decoration: const InputDecoration(labelText: 'Código de Barras (SKU)'),
-                  enabled: !esEdicion, // No dejamos cambiar el SKU si estamos editando
+        return Focus(
+          onKeyEvent: (node, event) {
+            if (event is KeyDownEvent) {
+              if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+                FocusScope.of(context).nextFocus();
+                return KeyEventResult.handled;
+              } 
+              else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+                FocusScope.of(context).previousFocus();
+                return KeyEventResult.handled;
+              }
+            }
+            return KeyEventResult.ignored;
+          },
+          child: AlertDialog(
+            title: Text(esEdicion ? 'Editar Producto ✏️' : 'Nuevo Producto 📦'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: skuController,
+                    autofocus: !esEdicion,
+                    decoration: const InputDecoration(labelText: 'Código de Barras (SKU)'),
+                    enabled: !esEdicion, 
+                    textInputAction: TextInputAction.next,
+                    onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                  ),
+                  TextField(
+                    controller: nombreController, 
+                    autofocus: esEdicion,
+                    decoration: const InputDecoration(labelText: 'Nombre del Producto'),
+                    textInputAction: TextInputAction.next,
+                    onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                  ),
+                  TextField(
+                    controller: precioVentaController, 
+                    decoration: const InputDecoration(labelText: 'Precio de Venta (\$)'), 
+                    keyboardType: TextInputType.number,
+                    textInputAction: TextInputAction.next,
+                    onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                  ),
+                  TextField(
+                    controller: precioCostoController, 
+                    decoration: const InputDecoration(labelText: 'Precio de Costo (\$)'), 
+                    keyboardType: TextInputType.number,
+                    textInputAction: TextInputAction.next,
+                    onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                  ),
+                  TextField(
+                    controller: stockController, 
+                    decoration: const InputDecoration(labelText: 'Unidades en Stock'), 
+                    keyboardType: TextInputType.number,
+                    textInputAction: TextInputAction.next, 
+                    onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _mainFocusNode.requestFocus();
+                },
+                style: ButtonStyle(
+                  overlayColor: WidgetStateProperty.resolveWith<Color?>(
+                    (Set<WidgetState> states) {
+                      if (states.contains(WidgetState.focused)) return Colors.red.withOpacity(0.2);
+                      return null;
+                    },
+                  ),
                 ),
-                TextField(controller: nombreController, decoration: const InputDecoration(labelText: 'Nombre del Producto')),
-                TextField(controller: precioVentaController, decoration: const InputDecoration(labelText: 'Precio de Venta (\$)'), keyboardType: TextInputType.number),
-                TextField(controller: precioCostoController, decoration: const InputDecoration(labelText: 'Precio de Costo (\$)'), keyboardType: TextInputType.number),
-                TextField(controller: stockController, decoration: const InputDecoration(labelText: 'Unidades en Stock'), keyboardType: TextInputType.number),
-              ],
-            ),
+                child: const Text('Cancelar', style: TextStyle(color: Colors.red)),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  final nuevo = Producto(
+                    sku: skuController.text.trim(), nombre: nombreController.text.trim(),
+                    precioVenta: double.tryParse(precioVentaController.text) ?? 0.0,
+                    precioCosto: double.tryParse(precioCostoController.text) ?? 0.0,
+                    stock: int.tryParse(stockController.text) ?? 0,
+                  );
+                  esEdicion ? await apiService.actualizarProducto(nuevo.sku, nuevo) : await apiService.crearProducto(nuevo);
+                  if (mounted) {
+                    Navigator.pop(context);
+                    _cargarTodosLosProductos(); 
+                    _mainFocusNode.requestFocus();
+                  }
+                },
+                style: ButtonStyle(
+                  backgroundColor: WidgetStateProperty.resolveWith<Color?>(
+                    (Set<WidgetState> states) {
+                      if (states.contains(WidgetState.focused)) return Colors.greenAccent;
+                      return null;
+                    },
+                  ),
+                  foregroundColor: WidgetStateProperty.resolveWith<Color?>(
+                    (Set<WidgetState> states) {
+                      if (states.contains(WidgetState.focused)) return Colors.black;
+                      return null; 
+                    },
+                  ),
+                ),
+                child: const Text('Guardar'),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context), // Cierra la ventana
-              child: const Text('Cancelar', style: TextStyle(color: Colors.red)),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                // Armamos el objeto con los datos del formulario
-                final nuevoProducto = Producto(
-                  sku: skuController.text.trim(),
-                  nombre: nombreController.text.trim(),
-                  precioVenta: double.tryParse(precioVentaController.text) ?? 0.0,
-                  precioCosto: double.tryParse(precioCostoController.text) ?? 0.0,
-                  stock: int.tryParse(stockController.text) ?? 0,
-                );
-
-                try {
-                  if (esEdicion) {
-                    await apiService.actualizarProducto(nuevoProducto.sku, nuevoProducto);
-                  } else {
-                    await apiService.crearProducto(nuevoProducto);
-                  }
-                  
-                  if (mounted) {
-                    Navigator.pop(context); // Cerramos el formulario
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(esEdicion ? 'Producto actualizado ✅' : 'Producto creado ✅'), backgroundColor: Colors.green),
-                    );
-                    _cargarTodosLosProductos(); // Recargamos la lista
-                  }
-                } catch (e) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red));
-                  }
-                }
-              },
-              child: const Text('Guardar'),
-            ),
-          ],
         );
       },
     );
@@ -154,113 +354,245 @@ class _PantallaInventarioState extends State<PantallaInventario> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Pingu POS 🐧', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
-        backgroundColor: Colors.blueAccent,
-        actions: [
-          // --- ¡NUEVO! BOTÓN PARA IR AL CORTE DE CAJA ---
-          IconButton(
-            icon: const Icon(Icons.analytics, color: Colors.white, size: 30),
-            tooltip: 'Corte de Caja',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const PantallaCorteCaja()),
-              );
-            },
-          ),
-          // Botón existente de la Caja Registradora
-          IconButton(
-            icon: const Icon(Icons.point_of_sale, color: Colors.white, size: 30),
-            tooltip: 'Ir a la Caja',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const PantallaCaja()),
-              ).then((_) => _cargarTodosLosProductos()); 
-            },
-          ),
-          IconButton(icon: const Icon(Icons.refresh, color: Colors.white), onPressed: _cargarTodosLosProductos),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _mostrarFormulario(),
-        icon: const Icon(Icons.add),
-        label: const Text('Nuevo Producto'),
-        backgroundColor: Colors.blueAccent,
-        foregroundColor: Colors.white,
-      ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      hintText: 'Buscar por nombre o SKU...',
-                      prefixIcon: const Icon(Icons.search),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                    onSubmitted: (_) => _buscarProducto(),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                ElevatedButton(
-                  onPressed: _buscarProducto,
-                  style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20)),
-                  child: const Text('Buscar'),
-                ),
-              ],
+    return Focus(
+      autofocus: true,
+      focusNode: _mainFocusNode,
+      onKeyEvent: (node, event) {
+        _manejarTeclas(event);
+        return KeyEventResult.handled; 
+      },
+      child: Scaffold(
+        key: _scaffoldKey,
+        appBar: AppBar(
+          leading: Container(
+            margin: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: _elementoActivo == -4 ? Colors.white.withOpacity(0.4) : Colors.transparent,
+              borderRadius: BorderRadius.circular(8)
+            ),
+            child: IconButton(
+              icon: const Icon(Icons.menu, color: Colors.white),
+              onPressed: () => _scaffoldKey.currentState?.openDrawer(),
             ),
           ),
-          Expanded(
-            child: FutureBuilder<List<Producto>>(
-              future: _productosFuture,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-                if (snapshot.hasError) return Center(child: Text('Error: ${snapshot.error}'));
-                if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text('No hay productos.'));
+          title: const Text('Pingu POS 🐧 - Inventario', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+          backgroundColor: Colors.blueAccent,
+          actions: [
+            IconButton(icon: const Icon(Icons.refresh, color: Colors.white), onPressed: _cargarTodosLosProductos),
+          ],
+        ),
+        
+        drawer: MenuLateralMagico(alCerrar: () => _setElementoActivo(-3)),
 
-                final productos = snapshot.data!;
-                return ListView.builder(
-                  itemCount: productos.length,
-                  itemBuilder: (context, index) {
-                    final producto = productos[index];
-                    return Card(
-                      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      child: ListTile(
-                        leading: const CircleAvatar(backgroundColor: Colors.blueAccent, child: Icon(Icons.inventory_2, color: Colors.white)),
-                        title: Text(producto.nombre, style: const TextStyle(fontWeight: FontWeight.bold)),
-                        subtitle: Text('SKU: ${producto.sku} | Stock: ${producto.stock} | Costo: \$${producto.precioCosto}'),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text('\$${producto.precioVenta.toStringAsFixed(0)}', style: const TextStyle(fontSize: 18, color: Colors.green, fontWeight: FontWeight.bold)),
-                            const SizedBox(width: 10),
-                            IconButton(
-                              icon: const Icon(Icons.edit, color: Colors.orange),
-                              onPressed: () => _mostrarFormulario(productoExistente: producto),
-                              tooltip: 'Editar',
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.delete, color: Colors.red),
-                              onPressed: () => _eliminar(producto.sku),
-                              tooltip: 'Eliminar',
-                            ),
-                          ],
-                        ),
+        body: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: _elementoActivo == -3 ? Border.all(color: Colors.blueAccent, width: 3) : null,
+                        borderRadius: BorderRadius.circular(10)
                       ),
-                    );
-                  },
-                );
-              },
+                      child: TextField(
+                        controller: _searchController,
+                        focusNode: _searchFocusNode,
+                        decoration: InputDecoration(
+                          hintText: 'Buscar (Esc para limpiar)...',
+                          prefixIcon: const Icon(Icons.search),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                          contentPadding: const EdgeInsets.symmetric(vertical: 15)
+                        ),
+                        onTap: () => _setElementoActivo(-3),
+                        onChanged: (_) => setState(() {}),
+                        onSubmitted: (_) {
+                          _buscarProducto();
+                          _setElementoActivo(0); 
+                        },
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  ElevatedButton(
+                    onPressed: () {
+                       _buscarProducto();
+                       _setElementoActivo(0);
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _elementoActivo == -2 ? Colors.amber : Colors.blueGrey.shade100,
+                      foregroundColor: _elementoActivo == -2 ? Colors.black : Colors.black87,
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+                      side: _elementoActivo == -2 ? const BorderSide(color: Colors.black, width: 2) : null,
+                    ),
+                    child: const Text('Buscar', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                  const SizedBox(width: 10),
+                  ElevatedButton.icon(
+                    onPressed: () => _mostrarFormulario(),
+                    icon: const Icon(Icons.add),
+                    label: const Text('Nuevo (Alt+N)'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _elementoActivo == -1 ? Colors.greenAccent : Colors.blueAccent,
+                      foregroundColor: _elementoActivo == -1 ? Colors.black : Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+                      side: _elementoActivo == -1 ? const BorderSide(color: Colors.black, width: 2) : null,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+            Expanded(
+              child: FutureBuilder<List<Producto>>(
+                future: _productosFuture,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+                  if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text('No hay productos.'));
+
+                  final productos = snapshot.data!;
+                  return ListView.builder(
+                    controller: _scrollController, 
+                    itemCount: productos.length,
+                    itemBuilder: (context, index) {
+                      final producto = productos[index];
+                      final bool estaSeleccionado = _elementoActivo == index;
+
+                      return Card(
+                        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        color: estaSeleccionado ? Colors.blue.shade50 : Colors.white,
+                        shape: estaSeleccionado 
+                          ? RoundedRectangleBorder(side: const BorderSide(color: Colors.blueAccent, width: 2), borderRadius: BorderRadius.circular(10)) 
+                          : null,
+                        child: ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: estaSeleccionado ? Colors.blue : Colors.blueGrey, 
+                            child: const Icon(Icons.inventory_2, color: Colors.white)
+                          ),
+                          title: Text(producto.nombre, style: const TextStyle(fontWeight: FontWeight.bold)),
+                          subtitle: Text('SKU: ${producto.sku} | Stock: ${producto.stock} | Costo: \$${producto.precioCosto}'),
+                          // 🔥 AQUÍ QUITAMOS LOS BOTONES Y DEJAMOS SOLO EL PRECIO 🔥
+                          trailing: Text('\$${producto.precioVenta.toStringAsFixed(0)}', 
+                            style: const TextStyle(fontSize: 18, color: Colors.green, fontWeight: FontWeight.bold)
+                          ),
+                          onTap: () {
+                            _setElementoActivo(index);
+                            _mostrarFormulario(productoExistente: producto);
+                          },
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// =======================================================
+// 🔥 NUEVO WIDGET: MENÚ LATERAL MAGICO CON TECLADO 🔥
+// =======================================================
+class MenuLateralMagico extends StatefulWidget {
+  final VoidCallback alCerrar;
+  const MenuLateralMagico({super.key, required this.alCerrar});
+
+  @override
+  State<MenuLateralMagico> createState() => _MenuLateralMagicoState();
+}
+
+class _MenuLateralMagicoState extends State<MenuLateralMagico> {
+  int _itemDrawerSeleccionado = 0; 
+  final FocusNode _drawerFocus = FocusNode();
+
+  final List<Map<String, dynamic>> _opciones = [
+    {'titulo': 'Inventario', 'icono': Icons.inventory_2, 'color': Colors.blueAccent},
+    {'titulo': 'Caja Registradora', 'icono': Icons.point_of_sale, 'color': Colors.green},
+    {'titulo': 'Historial de Ventas', 'icono': Icons.history, 'color': Colors.blueGrey},
+    {'titulo': 'Corte de Caja', 'icono': Icons.analytics, 'color': Colors.purple},
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    Future.delayed(Duration.zero, () => _drawerFocus.requestFocus());
+  }
+
+  void _ejecutarAccion(BuildContext context) {
+    Navigator.pop(context); 
+    
+    if (_itemDrawerSeleccionado == 1) {
+      Navigator.push(context, MaterialPageRoute(builder: (context) => const PantallaCaja())).then((_) => widget.alCerrar());
+    } else if (_itemDrawerSeleccionado == 2) {
+      Navigator.push(context, MaterialPageRoute(builder: (context) => const PantallaHistorialVentas())).then((_) => widget.alCerrar());
+    } else if (_itemDrawerSeleccionado == 3) {
+      Navigator.push(context, MaterialPageRoute(builder: (context) => const PantallaCorteCaja())).then((_) => widget.alCerrar());
+    } else {
+      widget.alCerrar(); 
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Drawer(
+      child: Focus(
+        focusNode: _drawerFocus,
+        onKeyEvent: (node, event) {
+          if (event is KeyDownEvent) {
+            if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+              if (_itemDrawerSeleccionado < _opciones.length - 1) {
+                setState(() => _itemDrawerSeleccionado++);
+              }
+            } else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+              if (_itemDrawerSeleccionado > 0) {
+                setState(() => _itemDrawerSeleccionado--);
+              }
+            } else if (event.logicalKey == LogicalKeyboardKey.enter) {
+              _ejecutarAccion(context);
+            }
+          }
+          return KeyEventResult.handled;
+        },
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const DrawerHeader(
+              decoration: BoxDecoration(color: Colors.blueAccent),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  Icon(Icons.storefront, size: 50, color: Colors.white),
+                  SizedBox(height: 10),
+                  Text('Pingu POS 🐧', style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ),
+            ...List.generate(_opciones.length, (index) {
+              final opcion = _opciones[index];
+              final bool estaResaltado = _itemDrawerSeleccionado == index;
+              
+              return Container(
+                color: estaResaltado ? Colors.grey.shade200 : Colors.transparent,
+                child: ListTile(
+                  leading: Icon(opcion['icono'], color: opcion['color']),
+                  title: Text(
+                    opcion['titulo'], 
+                    style: TextStyle(fontSize: 16, fontWeight: estaResaltado ? FontWeight.bold : FontWeight.normal)
+                  ),
+                  trailing: estaResaltado ? const Icon(Icons.keyboard_return, size: 16, color: Colors.grey) : null,
+                  onTap: () {
+                    setState(() => _itemDrawerSeleccionado = index);
+                    _ejecutarAccion(context);
+                  },
+                ),
+              );
+            })
+          ],
+        ),
       ),
     );
   }
