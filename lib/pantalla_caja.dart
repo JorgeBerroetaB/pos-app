@@ -32,6 +32,9 @@ class _PantallaCajaState extends State<PantallaCaja> {
   bool _enCarrito = false; 
   int _carritoSeleccionado = 0;
 
+  // 🔥 NUEVO ESTADO: Saber si el botón de ir "Atrás" está seleccionado con el teclado
+  bool _focoAtras = false;
+
   @override
   void initState() {
     super.initState();
@@ -49,6 +52,8 @@ class _PantallaCajaState extends State<PantallaCaja> {
   }
 
   void _buscarProducto() async {
+    setState(() => _focoAtras = false); // Quitar foco al botón atrás por si acaso
+
     if (_productosBusqueda.isNotEmpty && _itemBusquedaSeleccionado >= 0) {
       _agregarAlCarrito(_productosBusqueda[_itemBusquedaSeleccionado]);
       _searchController.clear();
@@ -78,6 +83,7 @@ class _PantallaCajaState extends State<PantallaCaja> {
 
     try {
       final productoExacto = await apiService.buscarPorSku(skuBuscado);
+
       if (productoExacto != null) {
         _agregarAlCarrito(productoExacto, precioBalanza: precioBalanza);
         _searchController.clear();
@@ -90,6 +96,7 @@ class _PantallaCajaState extends State<PantallaCaja> {
       }
 
       final resultados = await apiService.buscarProductos(termino);
+
       setState(() {
         _productosBusqueda = resultados;
         _itemBusquedaSeleccionado = resultados.isNotEmpty ? 0 : -1;
@@ -118,6 +125,7 @@ class _PantallaCajaState extends State<PantallaCaja> {
       }
       _enCarrito = false;
       _indiceEditandoPrecio = -1; 
+      _focoAtras = false;
     });
   }
 
@@ -163,14 +171,12 @@ class _PantallaCajaState extends State<PantallaCaja> {
   // =========================================================================
   void _abrirPopupCobro() {
     if (_carrito.isEmpty) return;
-
     setState(() { _indiceEditandoPrecio = -1; }); 
 
     final double totalActual = _totalPagar;
     final int totalAproximado = _aproximarPesoChileno(totalActual);
     
     bool imprimirTicket = true;
-    
     final TextEditingController tarjetaCtrl = TextEditingController(text: totalAproximado.toString());
     final TextEditingController efectivoCtrl = TextEditingController();
     final TextEditingController transCtrl = TextEditingController();
@@ -226,14 +232,13 @@ class _PantallaCajaState extends State<PantallaCaja> {
             double vuelto = restante < 0 ? restante.abs() : 0;
 
             void finalizarVenta() async {
-              if (!pagoCompleto) return; 
+              if (!pagoCompleto) return;
 
               // --- PREPARAMOS LA LISTA DE PAGOS PARA SPRING BOOT ---
               List<Map<String, dynamic>> listaPagos = [];
-              
               // Si dieron efectivo y hay vuelto, solo enviamos al sistema el efectivo real que entra a la caja
               double efectivoReal = pagadoEfec - vuelto;
-              
+
               if (pagadoTarj > 0) listaPagos.add({"metodoPago": "TARJETA", "monto": pagadoTarj});
               if (efectivoReal > 0) listaPagos.add({"metodoPago": "EFECTIVO", "monto": efectivoReal});
               if (pagadoTrans > 0) listaPagos.add({"metodoPago": "TRANSFERENCIA", "monto": pagadoTrans});
@@ -271,14 +276,11 @@ class _PantallaCajaState extends State<PantallaCaja> {
                   _enCarrito = false;
                   _carritoSeleccionado = 0;
                 });
-                
                 Future.delayed(const Duration(milliseconds: 100), () {
                   if (context.mounted) _searchFocusNode.requestFocus();
                 });
-
               } catch (e) {
                 if (dialogContext.mounted) Navigator.pop(dialogContext);
-                
                 if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(content: Text('Error al cobrar: $e'), backgroundColor: Colors.red),
@@ -356,7 +358,7 @@ class _PantallaCajaState extends State<PantallaCaja> {
                     return KeyEventResult.handled;
                   }
                 }
-                return KeyEventResult.ignored; 
+                return KeyEventResult.ignored;
               },
               child: AlertDialog(
                 title: const Text('Finalizar Venta 🧾', textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.bold)),
@@ -382,7 +384,7 @@ class _PantallaCajaState extends State<PantallaCaja> {
                             activeColor: Colors.blue,
                             onChanged: (bool value) {
                               setDialogState(() { 
-                                imprimirTicket = value; 
+                                imprimirTicket = value;
                                 focoActualIndex = 0; 
                                 switchFocus.requestFocus();
                               });
@@ -414,7 +416,7 @@ class _PantallaCajaState extends State<PantallaCaja> {
                               Text(
                                 pagoCompleto ? '\$${vuelto.toStringAsFixed(0)}' : '\$${restante.toStringAsFixed(0)}', 
                                 style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: pagoCompleto ? Colors.green[700] : Colors.red[700])
-                              ),
+                               ),
                             ],
                           ),
                         )
@@ -478,11 +480,13 @@ class _PantallaCajaState extends State<PantallaCaja> {
               if (_enCarrito) {
                 _enCarrito = false;
                 _indiceEditandoPrecio = -1; 
+                _focoAtras = false; // Nos aseguramos de quitarlo
                 _searchFocusNode.requestFocus();
               } else {
                 if (_carrito.isNotEmpty) {
                   _enCarrito = true;
                   _carritoSeleccionado = 0; 
+                  _focoAtras = false;
                   _rootFocusNode.requestFocus();
                 }
               }
@@ -490,26 +494,69 @@ class _PantallaCajaState extends State<PantallaCaja> {
             return KeyEventResult.handled;
           }
 
+          // 🔥 NUEVO: ESCAPE para salir del foco en "Atrás"
+          if (event.logicalKey == LogicalKeyboardKey.escape) {
+             if (_focoAtras) {
+                 setState(() => _focoAtras = false);
+                 _searchFocusNode.requestFocus();
+                 return KeyEventResult.handled;
+             }
+          }
+
+          // 🔥 NUEVO: ENTER sobre el botón Atrás
+          if ((event.logicalKey == LogicalKeyboardKey.enter || event.logicalKey == LogicalKeyboardKey.numpadEnter) && _focoAtras) {
+              Navigator.pop(context); // Vuelve al inventario
+              return KeyEventResult.handled;
+          }
+
           if (!_enCarrito) {
-            if (event.logicalKey == LogicalKeyboardKey.arrowDown && _productosBusqueda.isNotEmpty) {
-              setState(() {
-                _itemBusquedaSeleccionado = (_itemBusquedaSeleccionado + 1).clamp(0, _productosBusqueda.length - 1);
-              });
-              return KeyEventResult.handled;
+            if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+              if (_focoAtras) {
+                  // Si estamos arriba en "Atrás", bajamos al buscador
+                  setState(() => _focoAtras = false);
+                  _searchFocusNode.requestFocus();
+                  return KeyEventResult.handled;
+              } else if (_productosBusqueda.isNotEmpty) {
+                  setState(() {
+                    _itemBusquedaSeleccionado = (_itemBusquedaSeleccionado + 1).clamp(0, _productosBusqueda.length - 1);
+                  });
+                  // Movemos foco al root para que el TextField no se coma la flecha
+                  if (_searchFocusNode.hasFocus) _rootFocusNode.requestFocus();
+                  return KeyEventResult.handled;
+              }
             } 
-            else if (event.logicalKey == LogicalKeyboardKey.arrowUp && _productosBusqueda.isNotEmpty) {
-              setState(() {
-                _itemBusquedaSeleccionado = (_itemBusquedaSeleccionado - 1).clamp(0, _productosBusqueda.length - 1);
-              });
-              return KeyEventResult.handled;
+            else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+              if (_focoAtras) return KeyEventResult.handled; // Ya estamos arriba
+
+              if (_itemBusquedaSeleccionado > 0) {
+                  setState(() {
+                    _itemBusquedaSeleccionado = (_itemBusquedaSeleccionado - 1).clamp(0, _productosBusqueda.length - 1);
+                  });
+                  return KeyEventResult.handled;
+              } else if (_itemBusquedaSeleccionado == 0) {
+                  setState(() => _itemBusquedaSeleccionado = -1);
+                  _searchFocusNode.requestFocus();
+                  return KeyEventResult.handled;
+              } else if (_itemBusquedaSeleccionado == -1) {
+                  // 🔥 ¡LA MAGIA! Subimos del buscador al botón Atrás 🔥
+                  setState(() => _focoAtras = true);
+                  _searchFocusNode.unfocus();
+                  _rootFocusNode.requestFocus();
+                  return KeyEventResult.handled;
+              }
             }
-            else if (event.logicalKey == LogicalKeyboardKey.arrowRight && _carrito.isNotEmpty) {
+            else if (event.logicalKey == LogicalKeyboardKey.arrowRight && _carrito.isNotEmpty && !_focoAtras) {
               setState(() {
                 _enCarrito = true;
                 _carritoSeleccionado = 0;
               });
               _rootFocusNode.requestFocus();
               return KeyEventResult.handled;
+            }
+            // 🔥 ENTER para agregar producto desde la lista (si lo buscamos con flechas)
+            else if ((event.logicalKey == LogicalKeyboardKey.enter || event.logicalKey == LogicalKeyboardKey.numpadEnter) && _itemBusquedaSeleccionado >= 0) {
+                _agregarAlCarrito(_productosBusqueda[_itemBusquedaSeleccionado]);
+                return KeyEventResult.handled;
             }
           } 
           else { 
@@ -526,7 +573,7 @@ class _PantallaCajaState extends State<PantallaCaja> {
                 _rootFocusNode.requestFocus(); 
                 return KeyEventResult.handled;
               }
-              return KeyEventResult.ignored; 
+              return KeyEventResult.ignored;
             }
 
             if (_carritoSeleccionado < _carrito.length) {
@@ -547,12 +594,10 @@ class _PantallaCajaState extends State<PantallaCaja> {
                 setState(() {
                   _indiceEditandoPrecio = _carritoSeleccionado;
                 });
-                
                 _precioController.value = TextEditingValue(
                   text: digit,
                   selection: const TextSelection.collapsed(offset: 1),
                 );
-                
                 _precioFocusNode.requestFocus();
                 return KeyEventResult.handled;
               }
@@ -561,13 +606,11 @@ class _PantallaCajaState extends State<PantallaCaja> {
                 setState(() {
                   _indiceEditandoPrecio = _carritoSeleccionado;
                 });
-                
                 String precioTxt = _carrito[_carritoSeleccionado].precioParaVenta.toStringAsFixed(0);
                 _precioController.value = TextEditingValue(
                   text: precioTxt,
                   selection: TextSelection.collapsed(offset: precioTxt.length),
                 );
-                
                 _precioFocusNode.requestFocus();
                 return KeyEventResult.handled;
               }
@@ -612,6 +655,18 @@ class _PantallaCajaState extends State<PantallaCaja> {
         appBar: AppBar(
           title: const Text('Caja Registradora 💵 (F12 Cobrar)', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
           backgroundColor: Colors.green,
+          // 🔥 MODIFICAMOS EL LEADING (BOTÓN ATRÁS) PARA QUE BRILLE CON _focoAtras 🔥
+          leading: Container(
+            margin: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: _focoAtras ? Colors.white.withOpacity(0.4) : Colors.transparent,
+              borderRadius: BorderRadius.circular(8)
+            ),
+            child: IconButton(
+              icon: const Icon(Icons.arrow_back, color: Colors.white),
+              onPressed: () => Navigator.pop(context),
+            ),
+          ),
         ),
         body: Row(
           children: [
@@ -632,6 +687,12 @@ class _PantallaCajaState extends State<PantallaCaja> {
                         fillColor: _enCarrito ? Colors.grey[200] : Colors.white,
                       ),
                       onSubmitted: (_) => _buscarProducto(), 
+                      // 🔥 MODIFICADO PARA QUITAR _focoAtras SI TOCAN EL BUSCADOR CON EL MOUSE
+                      onTap: () => setState(() {
+                        _enCarrito = false;
+                        _focoAtras = false; 
+                        _itemBusquedaSeleccionado = -1;
+                      }),
                     ),
                   ),
                   Expanded(
@@ -665,7 +726,6 @@ class _PantallaCajaState extends State<PantallaCaja> {
               ),
             ),
             const VerticalDivider(width: 1, thickness: 1),
-            
             Expanded(
               flex: 4,
               child: Container(
@@ -694,7 +754,7 @@ class _PantallaCajaState extends State<PantallaCaja> {
                           Expanded(flex: 2, child: Text("PRECIO U.", textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey, fontSize: 12))),
                           Expanded(flex: 2, child: Text("UNIDADES", textAlign: TextAlign.right, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey, fontSize: 12))),
                         ],
-                      ),
+                       ),
                     ),
                     const Divider(height: 1, thickness: 2),
 

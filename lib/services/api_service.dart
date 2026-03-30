@@ -106,4 +106,12 @@ class ApiService {
       throw Exception('Error al cargar el historial de ventas');
     }
   }
+
+  // 🗑️ ELIMINAR VENTA
+  Future<void> eliminarVenta(String id) async { // Cambia String a int si tu ID es numérico
+    final response = await http.delete(Uri.parse('$ventasUrl/$id'));
+    if (response.statusCode != 204 && response.statusCode != 200) {
+      throw Exception('Error al eliminar la venta');
+    }
+  }
 }

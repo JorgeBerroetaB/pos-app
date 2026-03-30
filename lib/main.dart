@@ -61,11 +61,15 @@ class _PantallaInventarioState extends State<PantallaInventario> {
     Future.delayed(Duration.zero, () => _setElementoActivo(-3)); // Foco inicial en buscador
   }
 
+  // 🔥 ARREGLO 1: Ahora filtra los fantasmas tanto en la lista interna como en la pantalla
   void _cargarTodosLosProductos() {
     setState(() {
+      // 👇 AQUÍ ESTÁ EL CAMBIO: apiService.obtenerTodos() en lugar de obtenerProductos() 👇
       _productosFuture = apiService.obtenerTodos().then((productos) {
-        _productosActuales = productos;
-        return productos;
+        // Filtramos para que solo queden los que sí tienen SKU
+        final productosFiltrados = productos.where((p) => p.sku.trim().isNotEmpty).toList();
+        _productosActuales = productosFiltrados;
+        return productosFiltrados;
       });
     });
   }
@@ -99,7 +103,7 @@ class _PantallaInventarioState extends State<PantallaInventario> {
 
   void _manejarTeclas(KeyEvent event) {
     if (event is KeyDownEvent) {
-      // ALT + N: Nuevo Producto / ALT + M: Abrir Menú (Evita conflictos con Chrome)
+      // ALT + N: Nuevo Producto / ALT + M: Abrir Menú
       if (HardwareKeyboard.instance.isAltPressed) {
         if (event.logicalKey == LogicalKeyboardKey.keyN) {
           _mostrarFormulario();
@@ -117,9 +121,9 @@ class _PantallaInventarioState extends State<PantallaInventario> {
       }
       else if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
         if (_elementoActivo == -4) {
-          _setElementoActivo(-3); // Baja de hamburguesa a buscador
+          _setElementoActivo(-3); 
         } else if (_elementoActivo >= -3 && _elementoActivo <= -1) {
-          if (_productosActuales.isNotEmpty) _setElementoActivo(0); // Baja a la lista
+          if (_productosActuales.isNotEmpty) _setElementoActivo(0); 
         } else if (_elementoActivo >= 0 && _elementoActivo < _productosActuales.length - 1) {
           _setElementoActivo(_elementoActivo + 1);
           _hacerScrollHaciaItem();
@@ -130,9 +134,9 @@ class _PantallaInventarioState extends State<PantallaInventario> {
           _setElementoActivo(_elementoActivo - 1);
           _hacerScrollHaciaItem();
         } else if (_elementoActivo == 0) {
-          _setElementoActivo(-3); // Sube de la lista al buscador
+          _setElementoActivo(-3); 
         } else if (_elementoActivo >= -3 && _elementoActivo <= -1) {
-          _setElementoActivo(-4); // Sube de la barra al menú hamburguesa
+          _setElementoActivo(-4); 
         }
       }
       else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
@@ -144,12 +148,11 @@ class _PantallaInventarioState extends State<PantallaInventario> {
         else if (_elementoActivo == -2) _setElementoActivo(-3);
       }
       else if (event.logicalKey == LogicalKeyboardKey.enter) {
-        // Ejecutar acción según dónde estemos parados
         if (_elementoActivo == -4) {
           _scaffoldKey.currentState?.openDrawer();
         } else if (_elementoActivo == -2) {
           _buscarProducto();
-          _setElementoActivo(0); // Baja automáticamente tras buscar
+          _setElementoActivo(0); 
         } else if (_elementoActivo == -1) {
           _mostrarFormulario();
         } else if (_elementoActivo >= 0 && _elementoActivo < _productosActuales.length) {
@@ -157,7 +160,6 @@ class _PantallaInventarioState extends State<PantallaInventario> {
         }
       }
       else if (event.logicalKey == LogicalKeyboardKey.delete) {
-        // Mostrar diálogo de confirmación antes de eliminar
         if (_elementoActivo >= 0 && _elementoActivo < _productosActuales.length) {
           _mostrarConfirmacionEliminar(_productosActuales[_elementoActivo]);
         }
@@ -171,58 +173,98 @@ class _PantallaInventarioState extends State<PantallaInventario> {
   }
 
   void _eliminar(String sku) async {
-    await apiService.eliminarProducto(sku);
-    _cargarTodosLosProductos();
-    // Si borramos el último elemento, subimos el foco para no quedar en un índice inválido
-    if (_elementoActivo >= _productosActuales.length - 1) {
-      _setElementoActivo(_productosActuales.length - 2 >= 0 ? _productosActuales.length - 2 : -3);
+    if (sku.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('⚠️ Error: Este producto no tiene un código SKU válido.'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    try {
+      await apiService.eliminarProducto(sku);
+      _cargarTodosLosProductos();
+      
+      if (_elementoActivo >= _productosActuales.length - 1) {
+        _setElementoActivo(_productosActuales.length - 2 >= 0 ? _productosActuales.length - 2 : -3);
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('❌ Error del servidor al eliminar: $e'), backgroundColor: Colors.red),
+      );
     }
   }
 
-  // 🔥 NUEVA FUNCIÓN: Confirmación de eliminación 🔥
   void _mostrarConfirmacionEliminar(Producto producto) {
+    int botonSeleccionado = 1; 
+
     showDialog(
       context: context,
       builder: (context) {
-        return Focus(
-          autofocus: true,
-          onKeyEvent: (node, event) {
-            if (event is KeyDownEvent) {
-              if (event.logicalKey == LogicalKeyboardKey.enter) {
-                Navigator.pop(context); // Cierra el diálogo
-                _eliminar(producto.sku); // Elimina
-                _mainFocusNode.requestFocus(); // Devuelve el foco a la pantalla principal
-                return KeyEventResult.handled;
-              } else if (event.logicalKey == LogicalKeyboardKey.escape) {
-                Navigator.pop(context);
-                _mainFocusNode.requestFocus();
-                return KeyEventResult.handled;
-              }
-            }
-            return KeyEventResult.ignored;
-          },
-          child: AlertDialog(
-            title: const Text('Eliminar Producto 🗑️', style: TextStyle(color: Colors.red)),
-            content: Text('¿Estás seguro de que deseas eliminar "${producto.nombre}"?\n\n(Presiona Enter para confirmar o Esc para cancelar)'),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  _mainFocusNode.requestFocus();
-                },
-                child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+        return StatefulBuilder( 
+          builder: (context, setStateDialog) {
+            return Focus(
+              autofocus: true,
+              onKeyEvent: (node, event) {
+                if (event is KeyDownEvent) {
+                  if (event.logicalKey == LogicalKeyboardKey.arrowLeft || event.logicalKey == LogicalKeyboardKey.arrowRight) {
+                    setStateDialog(() {
+                      botonSeleccionado = botonSeleccionado == 0 ? 1 : 0;
+                    });
+                    return KeyEventResult.handled;
+                  } 
+                  else if (event.logicalKey == LogicalKeyboardKey.enter) {
+                    Navigator.pop(context);
+                    if (botonSeleccionado == 1) {
+                      _eliminar(producto.sku);
+                    }
+                    _mainFocusNode.requestFocus();
+                    return KeyEventResult.handled;
+                  } 
+                  else if (event.logicalKey == LogicalKeyboardKey.escape) {
+                    Navigator.pop(context);
+                    _mainFocusNode.requestFocus();
+                    return KeyEventResult.handled;
+                  }
+                }
+                return KeyEventResult.ignored;
+              },
+              child: AlertDialog(
+                title: const Text('Eliminar Producto 🗑️', style: TextStyle(color: Colors.red)),
+                content: Text('¿Estás seguro de que deseas eliminar "${producto.nombre}"?\n\n(Usa ⬅️ ➡️ para moverte y Enter para seleccionar)'),
+                actions: [
+                  Container(
+                    decoration: botonSeleccionado == 0 
+                      ? BoxDecoration(border: Border.all(color: Colors.grey, width: 2), borderRadius: BorderRadius.circular(8)) 
+                      : null,
+                    child: TextButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _mainFocusNode.requestFocus();
+                      },
+                      child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+                    ),
+                  ),
+                  Container(
+                    decoration: botonSeleccionado == 1 
+                      ? BoxDecoration(border: Border.all(color: Colors.red, width: 3), borderRadius: BorderRadius.circular(20)) 
+                      : null,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: botonSeleccionado == 1 ? Colors.red : Colors.red.shade300, 
+                        foregroundColor: Colors.white
+                      ),
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _eliminar(producto.sku);
+                        _mainFocusNode.requestFocus();
+                      },
+                      child: const Text('Eliminar'),
+                    ),
+                  ),
+                ],
               ),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-                onPressed: () {
-                  Navigator.pop(context);
-                  _eliminar(producto.sku);
-                  _mainFocusNode.requestFocus();
-                },
-                child: const Text('Eliminar'),
-              ),
-            ],
-          ),
+            );
+          }
         );
       },
     );
@@ -262,7 +304,7 @@ class _PantallaInventarioState extends State<PantallaInventario> {
                   TextField(
                     controller: skuController,
                     autofocus: !esEdicion,
-                    decoration: const InputDecoration(labelText: 'Código de Barras (SKU)'),
+                    decoration: const InputDecoration(labelText: 'Código de Barras (SKU) *Obligatorio'),
                     enabled: !esEdicion, 
                     textInputAction: TextInputAction.next,
                     onSubmitted: (_) => FocusScope.of(context).nextFocus(),
@@ -270,7 +312,7 @@ class _PantallaInventarioState extends State<PantallaInventario> {
                   TextField(
                     controller: nombreController, 
                     autofocus: esEdicion,
-                    decoration: const InputDecoration(labelText: 'Nombre del Producto'),
+                    decoration: const InputDecoration(labelText: 'Nombre del Producto *Obligatorio'),
                     textInputAction: TextInputAction.next,
                     onSubmitted: (_) => FocusScope.of(context).nextFocus(),
                   ),
@@ -316,13 +358,30 @@ class _PantallaInventarioState extends State<PantallaInventario> {
               ),
               ElevatedButton(
                 onPressed: () async {
+                  // 🔥 ARREGLO 2: Validación antes de guardar 🔥
+                  final sku = skuController.text.trim();
+                  final nombre = nombreController.text.trim();
+
+                  if (sku.isEmpty || nombre.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('⚠️ Error: Debes ingresar el SKU y el Nombre del producto.'), 
+                        backgroundColor: Colors.red
+                      ),
+                    );
+                    return; // Detiene la ejecución aquí, no guarda nada
+                  }
+
                   final nuevo = Producto(
-                    sku: skuController.text.trim(), nombre: nombreController.text.trim(),
+                    sku: sku, 
+                    nombre: nombre,
                     precioVenta: double.tryParse(precioVentaController.text) ?? 0.0,
                     precioCosto: double.tryParse(precioCostoController.text) ?? 0.0,
                     stock: int.tryParse(stockController.text) ?? 0,
                   );
+
                   esEdicion ? await apiService.actualizarProducto(nuevo.sku, nuevo) : await apiService.crearProducto(nuevo);
+                  
                   if (mounted) {
                     Navigator.pop(context);
                     _cargarTodosLosProductos(); 
@@ -471,7 +530,6 @@ class _PantallaInventarioState extends State<PantallaInventario> {
                           ),
                           title: Text(producto.nombre, style: const TextStyle(fontWeight: FontWeight.bold)),
                           subtitle: Text('SKU: ${producto.sku} | Stock: ${producto.stock} | Costo: \$${producto.precioCosto}'),
-                          // 🔥 AQUÍ QUITAMOS LOS BOTONES Y DEJAMOS SOLO EL PRECIO 🔥
                           trailing: Text('\$${producto.precioVenta.toStringAsFixed(0)}', 
                             style: const TextStyle(fontSize: 18, color: Colors.green, fontWeight: FontWeight.bold)
                           ),
@@ -494,7 +552,7 @@ class _PantallaInventarioState extends State<PantallaInventario> {
 }
 
 // =======================================================
-// 🔥 NUEVO WIDGET: MENÚ LATERAL MAGICO CON TECLADO 🔥
+// 🔥 WIDGET: MENÚ LATERAL MAGICO CON TECLADO 🔥
 // =======================================================
 class MenuLateralMagico extends StatefulWidget {
   final VoidCallback alCerrar;
