@@ -4,6 +4,7 @@ import 'models/producto.dart';
 import 'models/detalle_venta.dart';
 import 'services/api_service.dart';
 import 'services/ticket_service.dart';
+import 'main.dart'; // O el nombre del archivo donde esté tu PantallaInventario
 
 class PantallaCaja extends StatefulWidget {
   const PantallaCaja({super.key});
@@ -664,7 +665,11 @@ class _PantallaCajaState extends State<PantallaCaja> {
             ),
             child: IconButton(
               icon: const Icon(Icons.arrow_back, color: Colors.white),
-              onPressed: () => Navigator.pop(context),
+              // 🔥 AQUÍ ESTÁ LA MAGIA QUE EVITA LA PANTALLA EN BLANCO 🔥
+              onPressed: () => Navigator.pushReplacement(
+                context, 
+                MaterialPageRoute(builder: (context) => const PantallaInventario())
+              ),
             ),
           ),
         ),

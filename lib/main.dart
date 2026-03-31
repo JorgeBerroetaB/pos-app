@@ -58,15 +58,14 @@ class _PantallaInventarioState extends State<PantallaInventario> {
   void initState() {
     super.initState();
     _cargarTodosLosProductos();
-    Future.delayed(Duration.zero, () => _setElementoActivo(-3)); // Foco inicial en buscador
+    Future.delayed(Duration.zero, () {
+      _setElementoActivo(-3);
+    });
   }
 
-  // 🔥 ARREGLO 1: Ahora filtra los fantasmas tanto en la lista interna como en la pantalla
   void _cargarTodosLosProductos() {
     setState(() {
-      // 👇 AQUÍ ESTÁ EL CAMBIO: apiService.obtenerTodos() en lugar de obtenerProductos() 👇
       _productosFuture = apiService.obtenerTodos().then((productos) {
-        // Filtramos para que solo queden los que sí tienen SKU
         final productosFiltrados = productos.where((p) => p.sku.trim().isNotEmpty).toList();
         _productosActuales = productosFiltrados;
         return productosFiltrados;
@@ -88,9 +87,6 @@ class _PantallaInventarioState extends State<PantallaInventario> {
     });
   }
 
-  // ==========================================
-  // 🔥 LÓGICA DE TECLADO MÁGICO 2.0 🔥
-  // ==========================================
   void _setElementoActivo(int nuevo) {
     setState(() => _elementoActivo = nuevo);
     if (nuevo == -3) {
@@ -101,16 +97,41 @@ class _PantallaInventarioState extends State<PantallaInventario> {
     }
   }
 
-  void _manejarTeclas(KeyEvent event) {
+  bool _manejarTeclas(KeyEvent event) {
     if (event is KeyDownEvent) {
-      // ALT + N: Nuevo Producto / ALT + M: Abrir Menú
+      // 🔥 REGLA DE ORO MEJORADA: 
+      // Si el buscador tiene el foco, le permitimos salir hacia arriba o la derecha.
+      if (_searchFocusNode.hasFocus) {
+        if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+          if (_productosActuales.isNotEmpty) _setElementoActivo(0);
+          return true;
+        } else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+          _setElementoActivo(-4); // Sube a la hamburguesa
+          return true;
+        } else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+          _setElementoActivo(-2); // Se mueve al botón de Buscar
+          return true;
+        } else if (event.logicalKey == LogicalKeyboardKey.enter || event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+          _buscarProducto();
+          _setElementoActivo(0);
+          return true;
+        } else if (event.logicalKey == LogicalKeyboardKey.escape) {
+          _searchController.clear();
+          _buscarProducto();
+          return true;
+        }
+        // Para letras y números, ignoramos y dejamos que escriba.
+        return false;
+      }
+
+      // --- ATAJOS GLOBALES CUANDO EL BUSCADOR NO TIENE EL FOCO ---
       if (HardwareKeyboard.instance.isAltPressed) {
         if (event.logicalKey == LogicalKeyboardKey.keyN) {
           _mostrarFormulario();
-          return;
+          return true;
         } else if (event.logicalKey == LogicalKeyboardKey.keyM) {
           _scaffoldKey.currentState?.openDrawer();
-          return;
+          return true;
         }
       }
 
@@ -118,6 +139,7 @@ class _PantallaInventarioState extends State<PantallaInventario> {
         _searchController.clear();
         _buscarProducto();
         _setElementoActivo(-3);
+        return true;
       }
       else if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
         if (_elementoActivo == -4) {
@@ -128,6 +150,7 @@ class _PantallaInventarioState extends State<PantallaInventario> {
           _setElementoActivo(_elementoActivo + 1);
           _hacerScrollHaciaItem();
         }
+        return true;
       }
       else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
         if (_elementoActivo > 0) {
@@ -138,16 +161,19 @@ class _PantallaInventarioState extends State<PantallaInventario> {
         } else if (_elementoActivo >= -3 && _elementoActivo <= -1) {
           _setElementoActivo(-4); 
         }
+        return true;
       }
       else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
         if (_elementoActivo == -3) _setElementoActivo(-2);
         else if (_elementoActivo == -2) _setElementoActivo(-1);
+        return true;
       }
       else if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
         if (_elementoActivo == -1) _setElementoActivo(-2);
         else if (_elementoActivo == -2) _setElementoActivo(-3);
+        return true;
       }
-      else if (event.logicalKey == LogicalKeyboardKey.enter) {
+      else if (event.logicalKey == LogicalKeyboardKey.enter || event.logicalKey == LogicalKeyboardKey.numpadEnter) {
         if (_elementoActivo == -4) {
           _scaffoldKey.currentState?.openDrawer();
         } else if (_elementoActivo == -2) {
@@ -158,13 +184,16 @@ class _PantallaInventarioState extends State<PantallaInventario> {
         } else if (_elementoActivo >= 0 && _elementoActivo < _productosActuales.length) {
           _mostrarFormulario(productoExistente: _productosActuales[_elementoActivo]);
         }
+        return true;
       }
       else if (event.logicalKey == LogicalKeyboardKey.delete) {
         if (_elementoActivo >= 0 && _elementoActivo < _productosActuales.length) {
           _mostrarConfirmacionEliminar(_productosActuales[_elementoActivo]);
+          return true;
         }
       }
     }
+    return false;
   }
 
   void _hacerScrollHaciaItem() {
@@ -173,30 +202,22 @@ class _PantallaInventarioState extends State<PantallaInventario> {
   }
 
   void _eliminar(String sku) async {
-    if (sku.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('⚠️ Error: Este producto no tiene un código SKU válido.'), backgroundColor: Colors.red),
-      );
-      return;
-    }
-
+    if (sku.trim().isEmpty) return;
     try {
       await apiService.eliminarProducto(sku);
       _cargarTodosLosProductos();
-      
       if (_elementoActivo >= _productosActuales.length - 1) {
         _setElementoActivo(_productosActuales.length - 2 >= 0 ? _productosActuales.length - 2 : -3);
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('❌ Error del servidor al eliminar: $e'), backgroundColor: Colors.red),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('❌ Error al eliminar: $e'), backgroundColor: Colors.red));
+      }
     }
   }
 
   void _mostrarConfirmacionEliminar(Producto producto) {
     int botonSeleccionado = 1; 
-
     showDialog(
       context: context,
       builder: (context) {
@@ -207,20 +228,14 @@ class _PantallaInventarioState extends State<PantallaInventario> {
               onKeyEvent: (node, event) {
                 if (event is KeyDownEvent) {
                   if (event.logicalKey == LogicalKeyboardKey.arrowLeft || event.logicalKey == LogicalKeyboardKey.arrowRight) {
-                    setStateDialog(() {
-                      botonSeleccionado = botonSeleccionado == 0 ? 1 : 0;
-                    });
+                    setStateDialog(() => botonSeleccionado = botonSeleccionado == 0 ? 1 : 0);
                     return KeyEventResult.handled;
-                  } 
-                  else if (event.logicalKey == LogicalKeyboardKey.enter) {
+                  } else if (event.logicalKey == LogicalKeyboardKey.enter || event.logicalKey == LogicalKeyboardKey.numpadEnter) {
                     Navigator.pop(context);
-                    if (botonSeleccionado == 1) {
-                      _eliminar(producto.sku);
-                    }
+                    if (botonSeleccionado == 1) _eliminar(producto.sku);
                     _mainFocusNode.requestFocus();
                     return KeyEventResult.handled;
-                  } 
-                  else if (event.logicalKey == LogicalKeyboardKey.escape) {
+                  } else if (event.logicalKey == LogicalKeyboardKey.escape) {
                     Navigator.pop(context);
                     _mainFocusNode.requestFocus();
                     return KeyEventResult.handled;
@@ -233,31 +248,14 @@ class _PantallaInventarioState extends State<PantallaInventario> {
                 content: Text('¿Estás seguro de que deseas eliminar "${producto.nombre}"?\n\n(Usa ⬅️ ➡️ para moverte y Enter para seleccionar)'),
                 actions: [
                   Container(
-                    decoration: botonSeleccionado == 0 
-                      ? BoxDecoration(border: Border.all(color: Colors.grey, width: 2), borderRadius: BorderRadius.circular(8)) 
-                      : null,
-                    child: TextButton(
-                      onPressed: () {
-                        Navigator.pop(context);
-                        _mainFocusNode.requestFocus();
-                      },
-                      child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
-                    ),
+                    decoration: botonSeleccionado == 0 ? BoxDecoration(border: Border.all(color: Colors.grey, width: 2), borderRadius: BorderRadius.circular(8)) : null,
+                    child: TextButton(onPressed: () { Navigator.pop(context); _mainFocusNode.requestFocus(); }, child: const Text('Cancelar', style: TextStyle(color: Colors.grey))),
                   ),
                   Container(
-                    decoration: botonSeleccionado == 1 
-                      ? BoxDecoration(border: Border.all(color: Colors.red, width: 3), borderRadius: BorderRadius.circular(20)) 
-                      : null,
+                    decoration: botonSeleccionado == 1 ? BoxDecoration(border: Border.all(color: Colors.red, width: 3), borderRadius: BorderRadius.circular(20)) : null,
                     child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: botonSeleccionado == 1 ? Colors.red : Colors.red.shade300, 
-                        foregroundColor: Colors.white
-                      ),
-                      onPressed: () {
-                        Navigator.pop(context);
-                        _eliminar(producto.sku);
-                        _mainFocusNode.requestFocus();
-                      },
+                      style: ElevatedButton.styleFrom(backgroundColor: botonSeleccionado == 1 ? Colors.red : Colors.red.shade300, foregroundColor: Colors.white),
+                      onPressed: () { Navigator.pop(context); _eliminar(producto.sku); _mainFocusNode.requestFocus(); },
                       child: const Text('Eliminar'),
                     ),
                   ),
@@ -287,9 +285,12 @@ class _PantallaInventarioState extends State<PantallaInventario> {
               if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
                 FocusScope.of(context).nextFocus();
                 return KeyEventResult.handled;
-              } 
-              else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+              } else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
                 FocusScope.of(context).previousFocus();
+                return KeyEventResult.handled;
+              } else if (event.logicalKey == LogicalKeyboardKey.escape) {
+                Navigator.pop(context);
+                _mainFocusNode.requestFocus();
                 return KeyEventResult.handled;
               }
             }
@@ -301,107 +302,29 @@ class _PantallaInventarioState extends State<PantallaInventario> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  TextField(
-                    controller: skuController,
-                    autofocus: !esEdicion,
-                    decoration: const InputDecoration(labelText: 'Código de Barras (SKU) *Obligatorio'),
-                    enabled: !esEdicion, 
-                    textInputAction: TextInputAction.next,
-                    onSubmitted: (_) => FocusScope.of(context).nextFocus(),
-                  ),
-                  TextField(
-                    controller: nombreController, 
-                    autofocus: esEdicion,
-                    decoration: const InputDecoration(labelText: 'Nombre del Producto *Obligatorio'),
-                    textInputAction: TextInputAction.next,
-                    onSubmitted: (_) => FocusScope.of(context).nextFocus(),
-                  ),
-                  TextField(
-                    controller: precioVentaController, 
-                    decoration: const InputDecoration(labelText: 'Precio de Venta (\$)'), 
-                    keyboardType: TextInputType.number,
-                    textInputAction: TextInputAction.next,
-                    onSubmitted: (_) => FocusScope.of(context).nextFocus(),
-                  ),
-                  TextField(
-                    controller: precioCostoController, 
-                    decoration: const InputDecoration(labelText: 'Precio de Costo (\$)'), 
-                    keyboardType: TextInputType.number,
-                    textInputAction: TextInputAction.next,
-                    onSubmitted: (_) => FocusScope.of(context).nextFocus(),
-                  ),
-                  TextField(
-                    controller: stockController, 
-                    decoration: const InputDecoration(labelText: 'Unidades en Stock'), 
-                    keyboardType: TextInputType.number,
-                    textInputAction: TextInputAction.next, 
-                    onSubmitted: (_) => FocusScope.of(context).nextFocus(),
-                  ),
+                  TextField(controller: skuController, autofocus: !esEdicion, decoration: const InputDecoration(labelText: 'Código de Barras (SKU) *Obligatorio'), enabled: !esEdicion, textInputAction: TextInputAction.next, onSubmitted: (_) => FocusScope.of(context).nextFocus()),
+                  TextField(controller: nombreController, autofocus: esEdicion, decoration: const InputDecoration(labelText: 'Nombre del Producto *Obligatorio'), textInputAction: TextInputAction.next, onSubmitted: (_) => FocusScope.of(context).nextFocus()),
+                  TextField(controller: precioVentaController, decoration: const InputDecoration(labelText: 'Precio de Venta (\$)'), keyboardType: TextInputType.number, textInputAction: TextInputAction.next, onSubmitted: (_) => FocusScope.of(context).nextFocus()),
+                  TextField(controller: precioCostoController, decoration: const InputDecoration(labelText: 'Precio de Costo (\$)'), keyboardType: TextInputType.number, textInputAction: TextInputAction.next, onSubmitted: (_) => FocusScope.of(context).nextFocus()),
+                  TextField(controller: stockController, decoration: const InputDecoration(labelText: 'Unidades en Stock'), keyboardType: TextInputType.number, textInputAction: TextInputAction.next, onSubmitted: (_) => FocusScope.of(context).nextFocus()),
                 ],
               ),
             ),
             actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  _mainFocusNode.requestFocus();
-                },
-                style: ButtonStyle(
-                  overlayColor: WidgetStateProperty.resolveWith<Color?>(
-                    (Set<WidgetState> states) {
-                      if (states.contains(WidgetState.focused)) return Colors.red.withOpacity(0.2);
-                      return null;
-                    },
-                  ),
-                ),
-                child: const Text('Cancelar', style: TextStyle(color: Colors.red)),
-              ),
+              TextButton(onPressed: () { Navigator.pop(context); _mainFocusNode.requestFocus(); }, child: const Text('Cancelar', style: TextStyle(color: Colors.red))),
               ElevatedButton(
                 onPressed: () async {
-                  // 🔥 ARREGLO 2: Validación antes de guardar 🔥
                   final sku = skuController.text.trim();
                   final nombre = nombreController.text.trim();
-
                   if (sku.isEmpty || nombre.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('⚠️ Error: Debes ingresar el SKU y el Nombre del producto.'), 
-                        backgroundColor: Colors.red
-                      ),
-                    );
-                    return; // Detiene la ejecución aquí, no guarda nada
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('⚠️ Ingresa SKU y Nombre.'), backgroundColor: Colors.red));
+                    return;
                   }
-
-                  final nuevo = Producto(
-                    sku: sku, 
-                    nombre: nombre,
-                    precioVenta: double.tryParse(precioVentaController.text) ?? 0.0,
-                    precioCosto: double.tryParse(precioCostoController.text) ?? 0.0,
-                    stock: int.tryParse(stockController.text) ?? 0,
-                  );
-
+                  final nuevo = Producto(sku: sku, nombre: nombre, precioVenta: double.tryParse(precioVentaController.text) ?? 0.0, precioCosto: double.tryParse(precioCostoController.text) ?? 0.0, stock: int.tryParse(stockController.text) ?? 0);
                   esEdicion ? await apiService.actualizarProducto(nuevo.sku, nuevo) : await apiService.crearProducto(nuevo);
-                  
-                  if (mounted) {
-                    Navigator.pop(context);
-                    _cargarTodosLosProductos(); 
-                    _mainFocusNode.requestFocus();
-                  }
+                  if (mounted) { Navigator.pop(context); _cargarTodosLosProductos(); _mainFocusNode.requestFocus(); }
                 },
-                style: ButtonStyle(
-                  backgroundColor: WidgetStateProperty.resolveWith<Color?>(
-                    (Set<WidgetState> states) {
-                      if (states.contains(WidgetState.focused)) return Colors.greenAccent;
-                      return null;
-                    },
-                  ),
-                  foregroundColor: WidgetStateProperty.resolveWith<Color?>(
-                    (Set<WidgetState> states) {
-                      if (states.contains(WidgetState.focused)) return Colors.black;
-                      return null; 
-                    },
-                  ),
-                ),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.greenAccent, foregroundColor: Colors.black),
                 child: const Text('Guardar'),
               ),
             ],
@@ -414,35 +337,24 @@ class _PantallaInventarioState extends State<PantallaInventario> {
   @override
   Widget build(BuildContext context) {
     return Focus(
-      autofocus: true,
       focusNode: _mainFocusNode,
       onKeyEvent: (node, event) {
-        _manejarTeclas(event);
-        return KeyEventResult.handled; 
+        bool manejado = _manejarTeclas(event);
+        return manejado ? KeyEventResult.handled : KeyEventResult.ignored;
       },
       child: Scaffold(
         key: _scaffoldKey,
         appBar: AppBar(
           leading: Container(
             margin: const EdgeInsets.all(6),
-            decoration: BoxDecoration(
-              color: _elementoActivo == -4 ? Colors.white.withOpacity(0.4) : Colors.transparent,
-              borderRadius: BorderRadius.circular(8)
-            ),
-            child: IconButton(
-              icon: const Icon(Icons.menu, color: Colors.white),
-              onPressed: () => _scaffoldKey.currentState?.openDrawer(),
-            ),
+            decoration: BoxDecoration(color: _elementoActivo == -4 ? Colors.white.withOpacity(0.4) : Colors.transparent, borderRadius: BorderRadius.circular(8)),
+            child: IconButton(icon: const Icon(Icons.menu, color: Colors.white), onPressed: () => _scaffoldKey.currentState?.openDrawer()),
           ),
           title: const Text('Pingu POS 🐧 - Inventario', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
           backgroundColor: Colors.blueAccent,
-          actions: [
-            IconButton(icon: const Icon(Icons.refresh, color: Colors.white), onPressed: _cargarTodosLosProductos),
-          ],
+          actions: [IconButton(icon: const Icon(Icons.refresh, color: Colors.white), onPressed: _cargarTodosLosProductos)],
         ),
-        
         drawer: MenuLateralMagico(alCerrar: () => _setElementoActivo(-3)),
-
         body: Column(
           children: [
             Padding(
@@ -451,40 +363,21 @@ class _PantallaInventarioState extends State<PantallaInventario> {
                 children: [
                   Expanded(
                     child: Container(
-                      decoration: BoxDecoration(
-                        border: _elementoActivo == -3 ? Border.all(color: Colors.blueAccent, width: 3) : null,
-                        borderRadius: BorderRadius.circular(10)
-                      ),
+                      decoration: BoxDecoration(border: _elementoActivo == -3 ? Border.all(color: Colors.blueAccent, width: 3) : null, borderRadius: BorderRadius.circular(10)),
                       child: TextField(
                         controller: _searchController,
                         focusNode: _searchFocusNode,
-                        decoration: InputDecoration(
-                          hintText: 'Buscar (Esc para limpiar)...',
-                          prefixIcon: const Icon(Icons.search),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                          contentPadding: const EdgeInsets.symmetric(vertical: 15)
-                        ),
+                        decoration: InputDecoration(hintText: 'Buscar (Esc para limpiar)...', prefixIcon: const Icon(Icons.search), border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
                         onTap: () => _setElementoActivo(-3),
                         onChanged: (_) => setState(() {}),
-                        onSubmitted: (_) {
-                          _buscarProducto();
-                          _setElementoActivo(0); 
-                        },
+                        onSubmitted: (_) { _buscarProducto(); _setElementoActivo(0); },
                       ),
                     ),
                   ),
                   const SizedBox(width: 10),
                   ElevatedButton(
-                    onPressed: () {
-                       _buscarProducto();
-                       _setElementoActivo(0);
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: _elementoActivo == -2 ? Colors.amber : Colors.blueGrey.shade100,
-                      foregroundColor: _elementoActivo == -2 ? Colors.black : Colors.black87,
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
-                      side: _elementoActivo == -2 ? const BorderSide(color: Colors.black, width: 2) : null,
-                    ),
+                    onPressed: () { _buscarProducto(); _setElementoActivo(0); },
+                    style: ElevatedButton.styleFrom(backgroundColor: _elementoActivo == -2 ? Colors.amber : Colors.blueGrey.shade100, foregroundColor: _elementoActivo == -2 ? Colors.black : Colors.black87, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20), side: _elementoActivo == -2 ? const BorderSide(color: Colors.black, width: 2) : null),
                     child: const Text('Buscar', style: TextStyle(fontWeight: FontWeight.bold)),
                   ),
                   const SizedBox(width: 10),
@@ -492,12 +385,7 @@ class _PantallaInventarioState extends State<PantallaInventario> {
                     onPressed: () => _mostrarFormulario(),
                     icon: const Icon(Icons.add),
                     label: const Text('Nuevo (Alt+N)'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: _elementoActivo == -1 ? Colors.greenAccent : Colors.blueAccent,
-                      foregroundColor: _elementoActivo == -1 ? Colors.black : Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
-                      side: _elementoActivo == -1 ? const BorderSide(color: Colors.black, width: 2) : null,
-                    ),
+                    style: ElevatedButton.styleFrom(backgroundColor: _elementoActivo == -1 ? Colors.greenAccent : Colors.blueAccent, foregroundColor: _elementoActivo == -1 ? Colors.black : Colors.white, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20), side: _elementoActivo == -1 ? const BorderSide(color: Colors.black, width: 2) : null),
                   ),
                 ],
               ),
@@ -508,7 +396,6 @@ class _PantallaInventarioState extends State<PantallaInventario> {
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
                   if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text('No hay productos.'));
-
                   final productos = snapshot.data!;
                   return ListView.builder(
                     controller: _scrollController, 
@@ -516,27 +403,16 @@ class _PantallaInventarioState extends State<PantallaInventario> {
                     itemBuilder: (context, index) {
                       final producto = productos[index];
                       final bool estaSeleccionado = _elementoActivo == index;
-
                       return Card(
                         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                         color: estaSeleccionado ? Colors.blue.shade50 : Colors.white,
-                        shape: estaSeleccionado 
-                          ? RoundedRectangleBorder(side: const BorderSide(color: Colors.blueAccent, width: 2), borderRadius: BorderRadius.circular(10)) 
-                          : null,
+                        shape: estaSeleccionado ? RoundedRectangleBorder(side: const BorderSide(color: Colors.blueAccent, width: 2), borderRadius: BorderRadius.circular(10)) : null,
                         child: ListTile(
-                          leading: CircleAvatar(
-                            backgroundColor: estaSeleccionado ? Colors.blue : Colors.blueGrey, 
-                            child: const Icon(Icons.inventory_2, color: Colors.white)
-                          ),
+                          leading: CircleAvatar(backgroundColor: estaSeleccionado ? Colors.blue : Colors.blueGrey, child: const Icon(Icons.inventory_2, color: Colors.white)),
                           title: Text(producto.nombre, style: const TextStyle(fontWeight: FontWeight.bold)),
                           subtitle: Text('SKU: ${producto.sku} | Stock: ${producto.stock} | Costo: \$${producto.precioCosto}'),
-                          trailing: Text('\$${producto.precioVenta.toStringAsFixed(0)}', 
-                            style: const TextStyle(fontSize: 18, color: Colors.green, fontWeight: FontWeight.bold)
-                          ),
-                          onTap: () {
-                            _setElementoActivo(index);
-                            _mostrarFormulario(productoExistente: producto);
-                          },
+                          trailing: Text('\$${producto.precioVenta.toStringAsFixed(0)}', style: const TextStyle(fontSize: 18, color: Colors.green, fontWeight: FontWeight.bold)),
+                          onTap: () { _setElementoActivo(index); _mostrarFormulario(productoExistente: producto); },
                         ),
                       );
                     },
@@ -557,7 +433,6 @@ class _PantallaInventarioState extends State<PantallaInventario> {
 class MenuLateralMagico extends StatefulWidget {
   final VoidCallback alCerrar;
   const MenuLateralMagico({super.key, required this.alCerrar});
-
   @override
   State<MenuLateralMagico> createState() => _MenuLateralMagicoState();
 }
@@ -581,13 +456,12 @@ class _MenuLateralMagicoState extends State<MenuLateralMagico> {
 
   void _ejecutarAccion(BuildContext context) {
     Navigator.pop(context); 
-    
     if (_itemDrawerSeleccionado == 1) {
-      Navigator.push(context, MaterialPageRoute(builder: (context) => const PantallaCaja())).then((_) => widget.alCerrar());
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const PantallaCaja()));
     } else if (_itemDrawerSeleccionado == 2) {
-      Navigator.push(context, MaterialPageRoute(builder: (context) => const PantallaHistorialVentas())).then((_) => widget.alCerrar());
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const PantallaHistorialVentas()));
     } else if (_itemDrawerSeleccionado == 3) {
-      Navigator.push(context, MaterialPageRoute(builder: (context) => const PantallaCorteCaja())).then((_) => widget.alCerrar());
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const PantallaCorteCaja()));
     } else {
       widget.alCerrar(); 
     }
@@ -600,14 +474,10 @@ class _MenuLateralMagicoState extends State<MenuLateralMagico> {
         focusNode: _drawerFocus,
         onKeyEvent: (node, event) {
           if (event is KeyDownEvent) {
-            if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-              if (_itemDrawerSeleccionado < _opciones.length - 1) {
-                setState(() => _itemDrawerSeleccionado++);
-              }
-            } else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
-              if (_itemDrawerSeleccionado > 0) {
-                setState(() => _itemDrawerSeleccionado--);
-              }
+            if (event.logicalKey == LogicalKeyboardKey.arrowDown && _itemDrawerSeleccionado < _opciones.length - 1) {
+              setState(() => _itemDrawerSeleccionado++);
+            } else if (event.logicalKey == LogicalKeyboardKey.arrowUp && _itemDrawerSeleccionado > 0) {
+              setState(() => _itemDrawerSeleccionado--);
             } else if (event.logicalKey == LogicalKeyboardKey.enter) {
               _ejecutarAccion(context);
             }
@@ -632,20 +502,13 @@ class _MenuLateralMagicoState extends State<MenuLateralMagico> {
             ...List.generate(_opciones.length, (index) {
               final opcion = _opciones[index];
               final bool estaResaltado = _itemDrawerSeleccionado == index;
-              
               return Container(
                 color: estaResaltado ? Colors.grey.shade200 : Colors.transparent,
                 child: ListTile(
                   leading: Icon(opcion['icono'], color: opcion['color']),
-                  title: Text(
-                    opcion['titulo'], 
-                    style: TextStyle(fontSize: 16, fontWeight: estaResaltado ? FontWeight.bold : FontWeight.normal)
-                  ),
+                  title: Text(opcion['titulo'], style: TextStyle(fontSize: 16, fontWeight: estaResaltado ? FontWeight.bold : FontWeight.normal)),
                   trailing: estaResaltado ? const Icon(Icons.keyboard_return, size: 16, color: Colors.grey) : null,
-                  onTap: () {
-                    setState(() => _itemDrawerSeleccionado = index);
-                    _ejecutarAccion(context);
-                  },
+                  onTap: () { setState(() => _itemDrawerSeleccionado = index); _ejecutarAccion(context); },
                 ),
               );
             })
