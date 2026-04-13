@@ -17,24 +17,22 @@ class _PantallaHistorialVentasState extends State<PantallaHistorialVentas> {
   final ApiService apiService = ApiService();
 
   final FocusNode _mainFocusNode = FocusNode();
-  final FocusNode _btnFiltroFocus = FocusNode();
   final ScrollController _scrollController = ScrollController();
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   List<Venta> _ventasActuales = [];
   bool _cargando = true;
 
-  // 🔥 SISTEMA DE NAVEGACIÓN 2D 🔥
-  // -4 = Menú Hamburguesa
-  // -3 = Botón Filtro / Fecha
+  // 🔥 SISTEMA DE NAVEGACIÓN 2D SIMPLIFICADO 🔥
+  // -1 = Menú Hamburguesa
   //  0 a N = Lista de ventas
-  int _elementoActivo = -3;
+  int _elementoActivo = 0; 
 
   @override
   void initState() {
     super.initState();
     _cargarVentas();
-    Future.delayed(Duration.zero, () => _setElementoActivo(-3));
+    Future.delayed(Duration.zero, () => _mainFocusNode.requestFocus());
   }
 
   void _cargarVentas() async {
@@ -47,8 +45,13 @@ class _PantallaHistorialVentasState extends State<PantallaHistorialVentas> {
         _ventasActuales = ventas;
         _cargando = false;
         
-        if (_elementoActivo >= _ventasActuales.length) {
-          _elementoActivo = _ventasActuales.isNotEmpty ? _ventasActuales.length - 1 : -3;
+        // Ajustar el foco si la lista se actualiza
+        if (_ventasActuales.isEmpty) {
+          _elementoActivo = -1; // Al menú si no hay ventas
+        } else if (_elementoActivo >= _ventasActuales.length) {
+          _elementoActivo = _ventasActuales.length - 1;
+        } else if (_elementoActivo == -1 && _ventasActuales.isNotEmpty) {
+          _elementoActivo = 0;
         }
       });
     } catch (e) {
@@ -61,29 +64,20 @@ class _PantallaHistorialVentasState extends State<PantallaHistorialVentas> {
 
   void _setElementoActivo(int nuevo) {
     setState(() => _elementoActivo = nuevo);
-    if (nuevo == -3) {
-      _btnFiltroFocus.requestFocus();
-    } else {
-      if (_btnFiltroFocus.hasFocus) _btnFiltroFocus.unfocus();
-      _mainFocusNode.requestFocus();
-    }
   }
 
   void _manejarTeclas(KeyEvent event) {
     if (event is KeyDownEvent) {
+      // ALT + M: Abrir Menú Hamburguesa
       if (HardwareKeyboard.instance.isAltPressed && event.logicalKey == LogicalKeyboardKey.keyM) {
         _scaffoldKey.currentState?.openDrawer();
         return;
       }
 
-      if (event.logicalKey == LogicalKeyboardKey.escape) {
-        _setElementoActivo(-3);
-      }
-      else if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-        if (_elementoActivo == -4) {
-          _setElementoActivo(-3);
-        } else if (_elementoActivo == -3) {
-          if (_ventasActuales.isNotEmpty) _setElementoActivo(0);
+      if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+        if (_elementoActivo == -1 && _ventasActuales.isNotEmpty) {
+          _setElementoActivo(0);
+          _hacerScrollHaciaItem();
         } else if (_elementoActivo >= 0 && _elementoActivo < _ventasActuales.length - 1) {
           _setElementoActivo(_elementoActivo + 1);
           _hacerScrollHaciaItem();
@@ -94,16 +88,12 @@ class _PantallaHistorialVentasState extends State<PantallaHistorialVentas> {
           _setElementoActivo(_elementoActivo - 1);
           _hacerScrollHaciaItem();
         } else if (_elementoActivo == 0) {
-          _setElementoActivo(-3);
-        } else if (_elementoActivo == -3) {
-          _setElementoActivo(-4);
+          _setElementoActivo(-1); // Sube al menú
         }
       }
-      else if (event.logicalKey == LogicalKeyboardKey.enter) {
-        if (_elementoActivo == -4) {
+      else if (event.logicalKey == LogicalKeyboardKey.enter || event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+        if (_elementoActivo == -1) {
           _scaffoldKey.currentState?.openDrawer();
-        } else if (_elementoActivo == -3) {
-          _mostrarFiltroFecha();
         } else if (_elementoActivo >= 0 && _elementoActivo < _ventasActuales.length) {
           _mostrarDetalleVenta(_ventasActuales[_elementoActivo]);
         }
@@ -121,23 +111,34 @@ class _PantallaHistorialVentasState extends State<PantallaHistorialVentas> {
     }
   }
 
+  // 🔥 LÓGICA DE SCROLL: Centra el elemento en la pantalla
   void _hacerScrollHaciaItem() {
-    if (_ventasActuales.isEmpty || _elementoActivo < 0) return;
-    double posicion = _elementoActivo * 85.0; 
-    _scrollController.animateTo(posicion, duration: const Duration(milliseconds: 200), curve: Curves.easeInOut);
+    if (_ventasActuales.isEmpty || _elementoActivo < 0 || !_scrollController.hasClients) return;
+    
+    // Lo aumentamos un poco a 100 por los títulos de fecha
+    double alturaAproximadaItem = 100.0; 
+    double posicionDeseada = _elementoActivo * alturaAproximadaItem;
+    
+    double alturaPantalla = _scrollController.position.viewportDimension;
+    double offset = posicionDeseada - (alturaPantalla / 2) + (alturaAproximadaItem / 2);
+    
+    if (offset < 0) offset = 0;
+    if (offset > _scrollController.position.maxScrollExtent) {
+      offset = _scrollController.position.maxScrollExtent;
+    }
+    
+    _scrollController.animateTo(offset, duration: const Duration(milliseconds: 150), curve: Curves.easeInOut);
   }
 
-  void _mostrarFiltroFecha() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('📅 Aquí se abriría el calendario para filtrar...')),
-    );
+  // 🔥 NUEVA FUNCIÓN: Para formatear la fecha bonito 🔥
+  String _formatearFechaTexto(DateTime fecha) {
+    List<String> meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+    return "${fecha.day} de ${meses[fecha.month - 1]} de ${fecha.year}";
   }
 
-  // 🔥 NUEVO: Muestra el detalle real de la venta leyendo tu modelo 🔥
   void _mostrarDetalleVenta(Venta venta) {
     bool estaAnulada = venta.estado == 'CANCELADA';
     
-    // Formatear fecha simple
     String fechaStr = venta.fecha != null 
         ? "${venta.fecha!.day.toString().padLeft(2, '0')}/${venta.fecha!.month.toString().padLeft(2, '0')}/${venta.fecha!.year} ${venta.fecha!.hour.toString().padLeft(2, '0')}:${venta.fecha!.minute.toString().padLeft(2, '0')}"
         : "Sin fecha";
@@ -148,7 +149,7 @@ class _PantallaHistorialVentasState extends State<PantallaHistorialVentas> {
         return Focus(
           autofocus: true,
           onKeyEvent: (node, event) {
-            if (event is KeyDownEvent && (event.logicalKey == LogicalKeyboardKey.escape || event.logicalKey == LogicalKeyboardKey.enter)) {
+            if (event is KeyDownEvent && (event.logicalKey == LogicalKeyboardKey.escape || event.logicalKey == LogicalKeyboardKey.enter || event.logicalKey == LogicalKeyboardKey.numpadEnter)) {
               Navigator.pop(context);
               _mainFocusNode.requestFocus();
               return KeyEventResult.handled;
@@ -225,7 +226,7 @@ class _PantallaHistorialVentasState extends State<PantallaHistorialVentas> {
                   if (event.logicalKey == LogicalKeyboardKey.arrowLeft || event.logicalKey == LogicalKeyboardKey.arrowRight) {
                     setStateDialog(() => botonSeleccionado = botonSeleccionado == 0 ? 1 : 0);
                     return KeyEventResult.handled;
-                  } else if (event.logicalKey == LogicalKeyboardKey.enter) {
+                  } else if (event.logicalKey == LogicalKeyboardKey.enter || event.logicalKey == LogicalKeyboardKey.numpadEnter) {
                     Navigator.pop(context);
                     if (botonSeleccionado == 1) _anularVenta(venta);
                     _mainFocusNode.requestFocus();
@@ -268,12 +269,11 @@ class _PantallaHistorialVentasState extends State<PantallaHistorialVentas> {
 
   void _anularVenta(Venta venta) async {
     try {
-      // Usamos eliminarVenta pero tu Backend (si configuraste la nueva ruta) podría usar cancelarVenta
       await apiService.eliminarVenta(venta.id.toString());
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✅ Venta anulada correctamente'), backgroundColor: Colors.green));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✅ Petición de anulación enviada'), backgroundColor: Colors.green));
       }
-      _cargarVentas();
+      _cargarVentas(); // Recargamos para ver si el backend la borró o la actualizó
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('❌ Error al anular: $e'), backgroundColor: Colors.red));
@@ -296,7 +296,7 @@ class _PantallaHistorialVentasState extends State<PantallaHistorialVentas> {
           leading: Container(
             margin: const EdgeInsets.all(6),
             decoration: BoxDecoration(
-              color: _elementoActivo == -4 ? Colors.white.withOpacity(0.4) : Colors.transparent,
+              color: _elementoActivo == -1 ? Colors.white.withOpacity(0.4) : Colors.transparent,
               borderRadius: BorderRadius.circular(8)
             ),
             child: IconButton(
@@ -311,34 +311,11 @@ class _PantallaHistorialVentasState extends State<PantallaHistorialVentas> {
           ],
         ),
         
-        drawer: MenuLateralMagico(alCerrar: () => _setElementoActivo(-3), indiceActual: 2),
+        drawer: MenuLateralMagico(alCerrar: () => _mainFocusNode.requestFocus(), indiceActual: 2),
 
         body: Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      focusNode: _btnFiltroFocus,
-                      onPressed: () {
-                        _setElementoActivo(-3);
-                        _mostrarFiltroFecha();
-                      },
-                      icon: const Icon(Icons.calendar_month),
-                      label: const Text('Filtrar por Fecha (Hoy)'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _elementoActivo == -3 ? Colors.amber : Colors.grey.shade200,
-                        foregroundColor: _elementoActivo == -3 ? Colors.black : Colors.black87,
-                        padding: const EdgeInsets.symmetric(vertical: 20),
-                        side: _elementoActivo == -3 ? const BorderSide(color: Colors.black, width: 2) : null,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            const SizedBox(height: 10), // Un pequeño respiro arriba
             Expanded(
               child: _cargando 
                 ? const Center(child: CircularProgressIndicator())
@@ -352,14 +329,28 @@ class _PantallaHistorialVentasState extends State<PantallaHistorialVentas> {
                         final bool estaSeleccionado = _elementoActivo == index;
                         final bool estaAnulada = venta.estado == 'CANCELADA';
 
-                        // Formatear hora para mostrar en la lista
                         String horaStr = venta.fecha != null 
                             ? "${venta.fecha!.hour.toString().padLeft(2, '0')}:${venta.fecha!.minute.toString().padLeft(2, '0')}"
                             : "";
 
-                        return Card(
+                        // 🔥 LÓGICA DE SEPARADORES POR FECHA 🔥
+                        bool mostrarSeparador = false;
+                        if (index == 0) {
+                          mostrarSeparador = true;
+                        } else {
+                          final ventaAnterior = _ventasActuales[index - 1];
+                          if (venta.fecha != null && ventaAnterior.fecha != null) {
+                            if (venta.fecha!.day != ventaAnterior.fecha!.day || 
+                                venta.fecha!.month != ventaAnterior.fecha!.month || 
+                                venta.fecha!.year != ventaAnterior.fecha!.year) {
+                              mostrarSeparador = true;
+                            }
+                          }
+                        }
+
+                        // Generamos el diseño de la tarjeta
+                        Widget tarjetaVenta = Card(
                           margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                          // Si está anulada, el fondo es un poco rojizo
                           color: estaSeleccionado 
                             ? (estaAnulada ? Colors.red.shade50 : Colors.blueGrey.shade50) 
                             : (estaAnulada ? Colors.grey.shade100 : Colors.white),
@@ -398,10 +389,35 @@ class _PantallaHistorialVentasState extends State<PantallaHistorialVentas> {
                             ),
                             onTap: () {
                               _setElementoActivo(index);
+                              _mainFocusNode.requestFocus();
                               _mostrarDetalleVenta(venta);
                             },
                           ),
                         );
+
+                        // Si debe llevar separador, agrupamos el título y la tarjeta
+                        if (mostrarSeparador && venta.fecha != null) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.only(left: 20, top: 20, bottom: 5),
+                                child: Text(
+                                  _formatearFechaTexto(venta.fecha!),
+                                  style: TextStyle(
+                                    fontSize: 16, 
+                                    fontWeight: FontWeight.bold, 
+                                    color: Colors.blueGrey.shade700
+                                  ),
+                                ),
+                              ),
+                              tarjetaVenta,
+                            ],
+                          );
+                        }
+
+                        // Si no, devolvemos solo la tarjeta normal
+                        return tarjetaVenta;
                       },
                     ),
             ),
