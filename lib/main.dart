@@ -354,6 +354,7 @@ class _PantallaInventarioState extends State<PantallaInventario> {
           ),
           title: const Text('Pingu POS 🐧 - Inventario', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
           backgroundColor: Colors.blueAccent,
+<<<<<<< HEAD
           actions: [
             // 🌟 ESTE ES TU NUEVO BOTÓN DE FACTURAS 🌟
             IconButton(
@@ -372,6 +373,9 @@ class _PantallaInventarioState extends State<PantallaInventario> {
               onPressed: _cargarTodosLosProductos
             ),
           ],
+=======
+          actions: [IconButton(icon: const Icon(Icons.refresh, color: Colors.white), onPressed: _cargarTodosLosProductos)],
+>>>>>>> 2c1e1a5c34ce7bbb8d0066e1eee7b88682ef4fa6
         ),
         drawer: MenuLateralMagico(alCerrar: () => _setElementoActivo(-3)),
         body: Column(
